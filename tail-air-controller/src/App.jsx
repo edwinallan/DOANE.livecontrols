@@ -36,36 +36,68 @@ export default function App() {
   const holdTimerRef = useRef(null);
 
   useEffect(() => {
+    let isMounted = true;
+    let reconnectTimer;
+
     const connectOBS = async () => {
       try {
+        // Attempt to connect
         await obs.connect(
           "ws://127.0.0.1:4455",
           import.meta.env.VITE_OBS_PASSWORD,
         );
-        setObsConnected(true);
-        const { currentProgramSceneName } = await obs.call(
-          "GetCurrentProgramScene",
-        );
-        setActiveScene(currentProgramSceneName);
 
-        obs.on("CurrentProgramSceneChanged", (data) =>
-          setActiveScene(data.sceneName),
-        );
-        obs.on("SourceActiveStateChanged", (data) => {
-          if (["Tail A", "Tail B", "Mobile SRT"].includes(data.sourceName)) {
-            setSourcesActive((prev) => ({
-              ...prev,
-              [data.sourceName]: data.videoActive,
-            }));
-          }
-        });
+        if (isMounted) {
+          setObsConnected(true);
+          const { currentProgramSceneName } = await obs.call(
+            "GetCurrentProgramScene",
+          );
+          setActiveScene(currentProgramSceneName);
+        }
       } catch (err) {
-        setObsConnected(false);
-        console.error("OBS Connection failed.", err);
+        // If it fails (OBS isn't open yet), set disconnected and try again in 3 seconds
+        if (isMounted) {
+          setObsConnected(false);
+          reconnectTimer = setTimeout(connectOBS, 3000);
+        }
       }
     };
+
+    // If OBS gets closed WHILE the app is running, catch it and start retrying
+    obs.on("ConnectionClosed", () => {
+      if (isMounted) {
+        setObsConnected(false);
+        reconnectTimer = setTimeout(connectOBS, 3000);
+      }
+    });
+
+    // Handle normal scene/source changes
+    obs.on("CurrentProgramSceneChanged", (data) => {
+      if (isMounted) setActiveScene(data.sceneName);
+    });
+
+    obs.on("SourceActiveStateChanged", (data) => {
+      if (
+        isMounted &&
+        ["Tail A", "Tail B", "Mobile SRT"].includes(data.sourceName)
+      ) {
+        setSourcesActive((prev) => ({
+          ...prev,
+          [data.sourceName]: data.videoActive,
+        }));
+      }
+    });
+
+    // Start the initial connection sequence
     connectOBS();
-    return () => obs.disconnect();
+
+    // Cleanup listeners and timers if the app is closed
+    return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimer);
+      obs.removeAllListeners();
+      obs.disconnect();
+    };
   }, []);
 
   // Safe scene switching
