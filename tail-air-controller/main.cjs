@@ -6,8 +6,8 @@ const sqlite3 = require("sqlite3").verbose();
 
 // OSC Clients (Sending to port 57110)
 const oscClients = {
-  "Tail A": new Client("192.168.1.235", 57110),
-  "Tail B": new Client("192.168.1.232", 57110),
+  "Tail A": new Client("192.168.0.201", 57110),
+  "Tail B": new Client("192.168.0.202", 57110),
 };
 
 // OSC Server (Listening on port 57120 for replies)
@@ -31,7 +31,7 @@ oscServer.on("message", (msg, rinfo) => {
   const args = msg.slice(1);
 
   // Identify which camera replied based on IP
-  const cam = rinfo.address === "192.168.1.235" ? "Tail A" : "Tail B";
+  const cam = rinfo.address === "192.168.0.201" ? "Tail A" : "Tail B";
   const pending = pendingPresetSaves[cam];
 
   if (!pending) return;
