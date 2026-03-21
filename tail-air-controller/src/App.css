@@ -91,6 +91,9 @@ body {
   color: #fff;
   box-shadow: 0 0 15px rgba(220, 53, 69, 0.3);
 }
+.btn.red.active {
+  box-shadow: 0 0 15px rgba(220, 53, 69, 0.8);
+}
 .btn.red:hover {
   background-color: #c82333;
 }
@@ -163,6 +166,7 @@ body {
   left: 18px;
 }
 
+/* Standard Range Slider */
 input[type="range"] {
   -webkit-appearance: none;
   width: 100%;
@@ -185,10 +189,48 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: -5px;
 }
 
+/* --- DUAL RANGE SLIDER (Random Switcher) --- */
+.dual-slider-container {
+  position: relative;
+  width: 100%;
+  height: 20px;
+}
+.dual-slider {
+  position: absolute;
+  width: 100%;
+  pointer-events: none; /* Clicks pass through the track */
+  -webkit-appearance: none;
+  background: transparent;
+}
+/* Enable clicking ONLY on the thumb circles */
+.dual-slider::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  background: #0066ff;
+  border-radius: 50%;
+  cursor: pointer;
+  margin-top: -5px;
+}
+/* Visual track on the bottom slider only */
+.dual-slider.thumb-1::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: #333;
+  border-radius: 4px;
+}
+.dual-slider.thumb-2::-webkit-slider-runnable-track {
+  background: transparent; /* Hide top track so bottom one shows */
+}
+
+/* Vertical Slider (Zoom) */
 .vertical-slider {
   -webkit-appearance: slider-vertical;
+  writing-mode: bt-lr;
   width: 8px;
-  height: 120px;
+  height: 100px;
+  cursor: pointer;
 }
 
 /* Joystick */

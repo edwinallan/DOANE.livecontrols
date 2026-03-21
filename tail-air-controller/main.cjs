@@ -68,7 +68,6 @@ function createWindow() {
     height: winHeight,
     x: 0,
     y: height - winHeight,
-    alwaysOnTop: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
 

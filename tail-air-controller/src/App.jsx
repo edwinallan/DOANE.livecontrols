@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import OBSWebSocket from "obs-websocket-js";
-import "./App.css"; // This replaces Tailwind!
+import "./App.css";
 import {
   IconAuto,
   IconTrackingUpper,
@@ -16,32 +16,80 @@ const { ipcRenderer } = window.require("electron");
 const obs = new OBSWebSocket();
 
 export default function App() {
+  // --- STATE ---
   const [obsConnected, setObsConnected] = useState(false);
   const [activeScene, setActiveScene] = useState("");
-  const [sourcesActive, setSourcesActive] = useState({
+
+  // Track SRT Connections (Media Source Status)
+  const [sourcesConnected, setSourcesConnected] = useState({
     "Tail A": false,
     "Tail B": false,
     "Mobile SRT": false,
   });
+
   const [isMuted, setIsMuted] = useState(false);
 
+  // Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+
+  // Auto-Switcher State
   const [autoSwitch, setAutoSwitch] = useState(false);
   const [autoSwitchMobile, setAutoSwitchMobile] = useState(false);
   const [switchMin, setSwitchMin] = useState(5);
   const [switchMax, setSwitchMax] = useState(15);
   const timerRef = useRef(null);
 
+  // Camera Control State
   const [selectedCams, setSelectedCams] = useState(["Tail A"]);
   const [zoomLevel, setZoomLevel] = useState(0);
-  const holdTimerRef = useRef(null);
 
+  // Preset Holding State
+  const holdTimerRef = useRef(null);
+  const isSavingRef = useRef(false);
+  const [savingPreset, setSavingPreset] = useState(null); // For visual feedback
+
+  // --- REFS FOR EVENT LISTENERS ---
+  const activeSceneRef = useRef(activeScene);
+  const sourcesConnectedRef = useRef(sourcesConnected);
+  const autoSwitchMobileRef = useRef(autoSwitchMobile);
+
+  useEffect(() => {
+    activeSceneRef.current = activeScene;
+  }, [activeScene]);
+  useEffect(() => {
+    sourcesConnectedRef.current = sourcesConnected;
+  }, [sourcesConnected]);
+  useEffect(() => {
+    autoSwitchMobileRef.current = autoSwitchMobile;
+  }, [autoSwitchMobile]);
+
+  // --- RECORDING TIMER ---
+  useEffect(() => {
+    let interval;
+    if (isRecording) {
+      interval = setInterval(() => setRecordingTime((prev) => prev + 1), 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const s = (seconds % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
+  // --- OBS CONNECTION & EVENTS ---
   useEffect(() => {
     let isMounted = true;
     let reconnectTimer;
 
     const connectOBS = async () => {
       try {
-        // Attempt to connect
         await obs.connect(
           "ws://127.0.0.1:4455",
           import.meta.env.VITE_OBS_PASSWORD,
@@ -56,15 +104,10 @@ export default function App() {
         }
       } catch (err) {
         console.warn("OBS connection failed, resetting state...", err);
-
-        // CRITICAL FIX: Force a disconnect to clear the "not identified" stuck state
         try {
           await obs.disconnect();
-        } catch (e) {
-          /* ignore cleanup errors */
-        }
+        } catch (e) {}
 
-        // If it fails, set disconnected and try again in 3 seconds
         if (isMounted) {
           setObsConnected(false);
           reconnectTimer = setTimeout(connectOBS, 3000);
@@ -72,7 +115,6 @@ export default function App() {
       }
     };
 
-    // If OBS gets closed WHILE the app is running, catch it and start retrying
     obs.on("ConnectionClosed", () => {
       if (isMounted) {
         setObsConnected(false);
@@ -80,27 +122,53 @@ export default function App() {
       }
     });
 
-    // Handle normal scene/source changes
     obs.on("CurrentProgramSceneChanged", (data) => {
       if (isMounted) setActiveScene(data.sceneName);
     });
 
-    obs.on("SourceActiveStateChanged", (data) => {
-      if (
-        isMounted &&
-        ["Tail A", "Tail B", "Mobile SRT"].includes(data.sourceName)
-      ) {
-        setSourcesActive((prev) => ({
-          ...prev,
-          [data.sourceName]: data.videoActive,
-        }));
+    // Handle Media Connect (SRT Starts playing)
+    obs.on("MediaInputPlaybackStarted", (data) => {
+      const source = data.inputName;
+      if (!isMounted || !["Tail A", "Tail B", "Mobile SRT"].includes(source))
+        return;
+
+      setSourcesConnected((prev) => ({ ...prev, [source]: true }));
+
+      // Force Mobile switch on connect
+      if (source === "Mobile SRT" && autoSwitchMobileRef.current) {
+        handleSceneChange("Mobile");
       }
     });
 
-    // Start the initial connection sequence
+    // Handle Media Disconnect (SRT Fails/Ends)
+    obs.on("MediaInputPlaybackEnded", (data) => {
+      const source = data.inputName;
+      if (!isMounted || !["Tail A", "Tail B", "Mobile SRT"].includes(source))
+        return;
+
+      setSourcesConnected((prev) => ({ ...prev, [source]: false }));
+
+      // Auto-switch away if the current active camera disconnects
+      const currentScene = activeSceneRef.current;
+      const connected = { ...sourcesConnectedRef.current, [source]: false };
+
+      if (
+        source === "Tail A" &&
+        currentScene === "CAM 1" &&
+        connected["Tail B"]
+      ) {
+        handleSceneChange("CAM 2");
+      } else if (
+        source === "Tail B" &&
+        currentScene === "CAM 2" &&
+        connected["Tail A"]
+      ) {
+        handleSceneChange("CAM 1");
+      }
+    });
+
     connectOBS();
 
-    // Cleanup listeners and timers if the app is closed
     return () => {
       isMounted = false;
       clearTimeout(reconnectTimer);
@@ -109,20 +177,55 @@ export default function App() {
     };
   }, []);
 
-  // Safe scene switching
+  // --- ACTIONS ---
   const handleSceneChange = async (sceneName) => {
     if (!obsConnected) return alert("OBS is not connected!");
     try {
       await obs.call("SetCurrentProgramScene", { sceneName });
     } catch (err) {
-      alert(
-        `Failed to switch scene. Does a scene named EXACTLY "${sceneName}" exist in OBS?`,
-      );
       console.error(err);
     }
   };
 
-  // ... [Keep your Auto-switch useEffect exact same as before] ...
+  const toggleRecording = () => {
+    const newState = !isRecording;
+    setIsRecording(newState);
+    if (!newState) setRecordingTime(0);
+    sendOSC("/OBSBOT/Camera/TailAir/SetRecording", newState ? 1 : 0);
+  };
+
+  const sendOSC = (address, value) => {
+    if (selectedCams.length === 0) return;
+    ipcRenderer.send("send-osc", { targets: selectedCams, address, value });
+  };
+
+  // --- PRESET HANDLERS ---
+  const handlePresetDown = (presetId) => {
+    if (selectedCams.length === 0) return;
+    isSavingRef.current = false;
+
+    // Hold for 1 second to save
+    holdTimerRef.current = setTimeout(() => {
+      isSavingRef.current = true;
+      ipcRenderer.send("save-preset", { targets: selectedCams, presetId });
+
+      // Visual feedback
+      setSavingPreset(presetId);
+      setTimeout(() => setSavingPreset(null), 1500);
+    }, 1000);
+  };
+
+  const handlePresetUp = (presetId) => {
+    if (selectedCams.length === 0) return;
+    clearTimeout(holdTimerRef.current);
+
+    // If we didn't hold long enough to trigger a save, it's a load request
+    if (!isSavingRef.current) {
+      ipcRenderer.send("load-preset", { targets: selectedCams, presetId });
+    }
+  };
+
+  // --- AUTO SWITCHER LOGIC ---
   useEffect(() => {
     if (autoSwitch) {
       const scheduleNextSwitch = () => {
@@ -130,13 +233,13 @@ export default function App() {
           Math.floor(Math.random() * (switchMax - switchMin + 1) + switchMin) *
           1000;
         timerRef.current = setTimeout(async () => {
-          if (autoSwitchMobile && sourcesActive["Mobile SRT"]) {
+          if (autoSwitchMobile && sourcesConnected["Mobile SRT"]) {
             await handleSceneChange("Mobile");
           } else {
             const available = ["CAM 1", "CAM 2"].filter(
               (scene) =>
-                (scene === "CAM 1" && sourcesActive["Tail A"]) ||
-                (scene === "CAM 2" && sourcesActive["Tail B"]),
+                (scene === "CAM 1" && sourcesConnected["Tail A"]) ||
+                (scene === "CAM 2" && sourcesConnected["Tail B"]),
             );
             if (available.length > 0) {
               const nextScene =
@@ -152,12 +255,7 @@ export default function App() {
       clearTimeout(timerRef.current);
     }
     return () => clearTimeout(timerRef.current);
-  }, [autoSwitch, switchMin, switchMax, autoSwitchMobile, sourcesActive]);
-
-  const sendOSC = (address, value) => {
-    if (selectedCams.length === 0) return;
-    ipcRenderer.send("send-osc", { targets: selectedCams, address, value });
-  };
+  }, [autoSwitch, switchMin, switchMax, autoSwitchMobile, sourcesConnected]);
 
   return (
     <div className="app-container">
@@ -171,6 +269,27 @@ export default function App() {
             ></span>
             {obsConnected ? "Connected" : "Disconnected"}
           </div>
+        </div>
+
+        {/* Source Connection Indicators */}
+        <div className="flex-row" style={{ gap: "5px", marginBottom: "10px" }}>
+          {["Tail A", "Tail B", "Mobile SRT"].map((src) => (
+            <div
+              key={src}
+              style={{
+                fontSize: "10px",
+                padding: "4px 8px",
+                borderRadius: "4px",
+                backgroundColor: sourcesConnected[src] ? "#28a745" : "#dc3545",
+                color: "#fff",
+                fontWeight: "bold",
+                textAlign: "center",
+                flex: 1,
+              }}
+            >
+              {src.replace(" SRT", "")}
+            </div>
+          ))}
         </div>
 
         <div className="flex-col">
@@ -196,25 +315,38 @@ export default function App() {
             />
           </div>
 
-          <div className="flex-row">
-            <div className="flex-col" style={{ flex: 1 }}>
-              <span style={{ fontSize: "10px" }}>MIN: {switchMin}s</span>
+          <div
+            className="flex-col"
+            style={{ width: "100%", marginTop: "10px" }}
+          >
+            <div
+              className="space-between"
+              style={{ fontSize: "10px", marginBottom: "5px" }}
+            >
+              <span>MIN: {switchMin}s</span>
+              <span>MAX: {switchMax}s</span>
+            </div>
+            {/* Dual Range Slider */}
+            <div className="dual-slider-container">
               <input
                 type="range"
                 min="1"
-                max="60"
+                max="120"
                 value={switchMin}
-                onChange={(e) => setSwitchMin(Number(e.target.value))}
+                className="dual-slider thumb-1"
+                onChange={(e) =>
+                  setSwitchMin(Math.min(Number(e.target.value), switchMax - 1))
+                }
               />
-            </div>
-            <div className="flex-col" style={{ flex: 1 }}>
-              <span style={{ fontSize: "10px" }}>MAX: {switchMax}s</span>
               <input
                 type="range"
-                min={switchMin}
+                min="1"
                 max="120"
                 value={switchMax}
-                onChange={(e) => setSwitchMax(Number(e.target.value))}
+                className="dual-slider thumb-2"
+                onChange={(e) =>
+                  setSwitchMax(Math.max(Number(e.target.value), switchMin + 1))
+                }
               />
             </div>
           </div>
@@ -224,7 +356,7 @@ export default function App() {
             style={{
               borderTop: "1px solid #333",
               paddingTop: "10px",
-              marginTop: "10px",
+              marginTop: "15px",
             }}
           >
             <span style={{ fontSize: "13px" }}>Force Mobile on connect</span>
@@ -324,13 +456,29 @@ export default function App() {
           {/* Settings */}
           <div className="flex-col">
             <div className="inner-panel space-between">
-              <span>Rec on Cam</span>
+              <div
+                className="flex-col"
+                style={{ alignItems: "flex-start", gap: "2px" }}
+              >
+                <span>Record</span>
+                {isRecording && (
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      color: "#ff4444",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {formatTime(recordingTime)}
+                  </span>
+                )}
+              </div>
               <button
-                onClick={() =>
-                  sendOSC("/OBSBOT/Camera/TailAir/SetRecording", 1)
-                }
-                className="btn btn-round red"
-              ></button>
+                onClick={toggleRecording}
+                className={`btn btn-round ${isRecording ? "red active" : ""}`}
+              >
+                {isRecording ? "⬛" : "⏺"}
+              </button>
             </div>
             <div className="inner-panel space-between">
               <span>Cam Audio</span>
@@ -348,7 +496,7 @@ export default function App() {
                 }
                 className="btn btn-small"
               >
-                <IconTungsten width="24" fill="#ffc107" />
+                <IconTungsten width="36" fill="#ffc107" />
               </button>
               <button
                 onClick={() =>
@@ -356,7 +504,7 @@ export default function App() {
                 }
                 className="btn btn-small"
               >
-                <IconAuto width="24" fill="#fff" />
+                <IconAuto width="36" fill="#fff" />
               </button>
               <button
                 onClick={() =>
@@ -364,7 +512,7 @@ export default function App() {
                 }
                 className="btn btn-small"
               >
-                <IconSun width="24" fill="#fd7e14" />
+                <IconSun width="36" fill="#fd7e14" />
               </button>
               <button
                 onClick={() =>
@@ -372,12 +520,12 @@ export default function App() {
                 }
                 className="btn btn-small"
               >
-                <IconCloudy width="24" fill="#0dcaf0" />
+                <IconCloudy width="36" fill="#0dcaf0" />
               </button>
             </div>
           </div>
 
-          {/* PTZ */}
+          {/* PTZ & Presets */}
           <div className="inner-panel flex-col space-between">
             <div className="section-title" style={{ width: "100%" }}>
               PTZ & Zoom
@@ -395,6 +543,9 @@ export default function App() {
                   onMouseUp={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 0)
                   }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 0)
+                  }
                   className="btn btn-round"
                 >
                   ▲
@@ -405,6 +556,9 @@ export default function App() {
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 50)
                   }
                   onMouseUp={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 0)
+                  }
+                  onMouseLeave={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 0)
                   }
                   className="btn btn-round"
@@ -426,6 +580,9 @@ export default function App() {
                   onMouseUp={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 0)
                   }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 0)
+                  }
                   className="btn btn-round"
                 >
                   ▶
@@ -438,6 +595,9 @@ export default function App() {
                   onMouseUp={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 0)
                   }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 0)
+                  }
                   className="btn btn-round"
                 >
                   ▼
@@ -445,17 +605,30 @@ export default function App() {
                 <div />
               </div>
 
+              {/* Vertical Zoom Slider */}
               <div
                 className="flex-col"
-                style={{ alignItems: "center", width: "auto" }}
+                style={{
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "auto",
+                }}
               >
-                <span style={{ fontSize: "12px", fontWeight: "bold" }}>+</span>
+                <span
+                  style={{
+                    fontSize: "14px",
+                    fontWeight: "bold",
+                    marginBottom: "5px",
+                  }}
+                >
+                  +
+                </span>
                 <input
                   type="range"
-                  className="vertical-slider"
                   min="0"
                   max="100"
                   value={zoomLevel}
+                  className="vertical-slider"
                   onChange={(e) => {
                     setZoomLevel(parseInt(e.target.value));
                     sendOSC(
@@ -464,10 +637,19 @@ export default function App() {
                     );
                   }}
                 />
-                <span style={{ fontSize: "12px", fontWeight: "bold" }}>-</span>
+                <span
+                  style={{
+                    fontSize: "14px",
+                    fontWeight: "bold",
+                    marginTop: "5px",
+                  }}
+                >
+                  -
+                </span>
               </div>
             </div>
 
+            {/* Presets */}
             <div
               style={{
                 width: "100%",
@@ -476,14 +658,34 @@ export default function App() {
                 marginTop: "10px",
               }}
             >
+              <div className="space-between" style={{ marginBottom: "8px" }}>
+                <span
+                  style={{
+                    fontSize: "9px",
+                    color: "#888",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  Click to Load / Hold 1s to Save
+                </span>
+              </div>
               <div className="flex-row">
                 {[1, 2, 3].map((preset) => (
                   <button
                     key={preset}
-                    className="btn"
-                    style={{ flex: 1, padding: "10px" }}
+                    onMouseDown={() => handlePresetDown(preset)}
+                    onMouseUp={() => handlePresetUp(preset)}
+                    onMouseLeave={() => clearTimeout(holdTimerRef.current)}
+                    className={`btn ${savingPreset === preset ? "active" : ""}`}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      fontSize: "12px",
+                      transition: "all 0.2s",
+                    }}
                   >
-                    P{preset}
+                    {savingPreset === preset ? "SAVED!" : `P${preset}`}
                   </button>
                 ))}
               </div>
