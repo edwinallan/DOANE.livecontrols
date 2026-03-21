@@ -71,7 +71,7 @@ function createWindow() {
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
 
-  exec("open -j -g -a OBS");
+  exec("open -a OBS");
 
   // Add a 3-second delay to let OBS fully initialize its WebSocket server
   setTimeout(() => {

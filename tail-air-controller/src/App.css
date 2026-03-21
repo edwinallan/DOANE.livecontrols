@@ -97,11 +97,22 @@ body {
 .btn.red:hover {
   background-color: #c82333;
 }
+/* Update your button class */
 .btn-round {
   border-radius: 50%;
   width: 44px;
   height: 44px;
+  min-width: 44px; /* Prevents flexbox squishing */
+  min-height: 44px; /* Prevents flexbox squishing */
+  flex-shrink: 0; /* Forces it to stay a circle */
   padding: 0;
+}
+
+.vertical-slider {
+  width: 144px;
+  transform: rotate(-90deg);
+  cursor: pointer;
+  position: absolute;
 }
 .btn-small {
   padding: 10px;
@@ -222,15 +233,6 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .dual-slider.thumb-2::-webkit-slider-runnable-track {
   background: transparent; /* Hide top track so bottom one shows */
-}
-
-/* Vertical Slider (Zoom) */
-.vertical-slider {
-  -webkit-appearance: slider-vertical;
-  writing-mode: bt-lr;
-  width: 8px;
-  height: 100px;
-  cursor: pointer;
 }
 
 /* Joystick */

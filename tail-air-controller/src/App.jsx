@@ -83,10 +83,87 @@ export default function App() {
     return `${m}:${s}`;
   };
 
-  // --- OBS CONNECTION & EVENTS ---
+  // --- OBS CONNECTION & POLLING ---
+  // --- OBS CONNECTION & POLLING ---
   useEffect(() => {
     let isMounted = true;
     let reconnectTimer;
+    let pollTimer;
+    let isPolling = false;
+
+    // Named event handlers so we can remove them safely
+    const onConnectionClosed = () => {
+      if (isMounted) {
+        setObsConnected(false);
+        isPolling = false;
+        clearTimeout(pollTimer);
+        reconnectTimer = setTimeout(connectOBS, 3000);
+      }
+    };
+
+    const onSceneChanged = (data) => {
+      if (isMounted) setActiveScene(data.sceneName);
+    };
+
+    const pollMediaStatus = async () => {
+      if (!isMounted || !isPolling) return;
+
+      const sources = ["Tail A", "Tail B", "Mobile SRT"];
+      let updated = false;
+      const nextState = { ...sourcesConnectedRef.current };
+
+      for (const source of sources) {
+        try {
+          const { mediaState } = await obs.call("GetMediaInputStatus", {
+            inputName: source,
+          });
+          const isPlaying = mediaState === "OBS_MEDIA_STATE_PLAYING";
+
+          if (nextState[source] !== isPlaying) {
+            nextState[source] = isPlaying;
+            updated = true;
+
+            // Force Mobile switch on connect
+            if (
+              isPlaying &&
+              source === "Mobile SRT" &&
+              autoSwitchMobileRef.current
+            ) {
+              handleSceneChange("Mobile");
+            }
+
+            // Auto-switch away if the active camera disconnects
+            if (!isPlaying) {
+              const currentScene = activeSceneRef.current;
+              if (
+                source === "Tail A" &&
+                currentScene === "CAM 1" &&
+                nextState["Tail B"]
+              ) {
+                handleSceneChange("CAM 2");
+              } else if (
+                source === "Tail B" &&
+                currentScene === "CAM 2" &&
+                nextState["Tail A"]
+              ) {
+                handleSceneChange("CAM 1");
+              }
+            }
+          }
+        } catch (err) {
+          // Source missing/offline, just ignore
+        }
+      }
+
+      if (updated && isMounted) {
+        setSourcesConnected(nextState);
+      }
+
+      // Recursively queue the next poll only after this one finishes
+      if (isPolling) {
+        pollTimer = setTimeout(pollMediaStatus, 1000);
+      }
+    };
 
     const connectOBS = async () => {
       try {
@@ -101,9 +178,13 @@ export default function App() {
             "GetCurrentProgramScene",
           );
           setActiveScene(currentProgramSceneName);
+
+          // Start polling once connected
+          isPolling = true;
+          pollTimer = setTimeout(pollMediaStatus, 1000);
         }
       } catch (err) {
-        console.warn("OBS connection failed, resetting state...", err);
+        console.warn("OBS connection failed:", err.message);
         try {
           await obs.disconnect();
         } catch (e) {}
@@ -115,71 +196,31 @@ export default function App() {
       }
     };
 
-    obs.on("ConnectionClosed", () => {
-      if (isMounted) {
-        setObsConnected(false);
-        reconnectTimer = setTimeout(connectOBS, 3000);
-      }
-    });
-
-    obs.on("CurrentProgramSceneChanged", (data) => {
-      if (isMounted) setActiveScene(data.sceneName);
-    });
-
-    // Handle Media Connect (SRT Starts playing)
-    obs.on("MediaInputPlaybackStarted", (data) => {
-      const source = data.inputName;
-      if (!isMounted || !["Tail A", "Tail B", "Mobile SRT"].includes(source))
-        return;
-
-      setSourcesConnected((prev) => ({ ...prev, [source]: true }));
-
-      // Force Mobile switch on connect
-      if (source === "Mobile SRT" && autoSwitchMobileRef.current) {
-        handleSceneChange("Mobile");
-      }
-    });
-
-    // Handle Media Disconnect (SRT Fails/Ends)
-    obs.on("MediaInputPlaybackEnded", (data) => {
-      const source = data.inputName;
-      if (!isMounted || !["Tail A", "Tail B", "Mobile SRT"].includes(source))
-        return;
-
-      setSourcesConnected((prev) => ({ ...prev, [source]: false }));
-
-      // Auto-switch away if the current active camera disconnects
-      const currentScene = activeSceneRef.current;
-      const connected = { ...sourcesConnectedRef.current, [source]: false };
-
-      if (
-        source === "Tail A" &&
-        currentScene === "CAM 1" &&
-        connected["Tail B"]
-      ) {
-        handleSceneChange("CAM 2");
-      } else if (
-        source === "Tail B" &&
-        currentScene === "CAM 2" &&
-        connected["Tail A"]
-      ) {
-        handleSceneChange("CAM 1");
-      }
-    });
+    obs.on("ConnectionClosed", onConnectionClosed);
+    obs.on("CurrentProgramSceneChanged", onSceneChanged);
 
     connectOBS();
 
     return () => {
       isMounted = false;
+      isPolling = false;
       clearTimeout(reconnectTimer);
-      obs.removeAllListeners();
-      obs.disconnect();
+      clearTimeout(pollTimer);
+
+      // CAREFUL REMOVAL: Only strip the events we explicitly attached!
+      obs.off("ConnectionClosed", onConnectionClosed);
+      obs.off("CurrentProgramSceneChanged", onSceneChanged);
+
+      obs.disconnect().catch(() => {});
     };
   }, []);
 
   // --- ACTIONS ---
   const handleSceneChange = async (sceneName) => {
-    if (!obsConnected) return alert("OBS is not connected!");
+    if (!obsConnected) {
+      console.warn("OBS is not connected! Auto-switch skipped.");
+      return;
+    }
     try {
       await obs.call("SetCurrentProgramScene", { sceneName });
     } catch (err) {
@@ -623,20 +664,33 @@ export default function App() {
                 >
                   +
                 </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={zoomLevel}
-                  className="vertical-slider"
-                  onChange={(e) => {
-                    setZoomLevel(parseInt(e.target.value));
-                    sendOSC(
-                      "/OBSBOT/WebCam/General/SetZoom",
-                      parseInt(e.target.value),
-                    );
+
+                <div
+                  style={{
+                    position: "relative",
+                    width: "20px",
+                    height: "100px",
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
                   }}
-                />
+                >
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={zoomLevel}
+                    className="vertical-slider"
+                    onChange={(e) => {
+                      setZoomLevel(parseInt(e.target.value));
+                      sendOSC(
+                        "/OBSBOT/WebCam/General/SetZoom",
+                        parseInt(e.target.value),
+                      );
+                    }}
+                  />
+                </div>
+
                 <span
                   style={{
                     fontSize: "14px",
