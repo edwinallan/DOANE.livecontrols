@@ -55,7 +55,16 @@ export default function App() {
           setActiveScene(currentProgramSceneName);
         }
       } catch (err) {
-        // If it fails (OBS isn't open yet), set disconnected and try again in 3 seconds
+        console.warn("OBS connection failed, resetting state...", err);
+
+        // CRITICAL FIX: Force a disconnect to clear the "not identified" stuck state
+        try {
+          await obs.disconnect();
+        } catch (e) {
+          /* ignore cleanup errors */
+        }
+
+        // If it fails, set disconnected and try again in 3 seconds
         if (isMounted) {
           setObsConnected(false);
           reconnectTimer = setTimeout(connectOBS, 3000);

@@ -74,6 +74,15 @@ function createWindow() {
 
   exec("open -a OBS --args --minimize");
 
+  // Add a 3-second delay to let OBS fully initialize its WebSocket server
+  setTimeout(() => {
+    if (process.env.NODE_ENV === "development") {
+      mainWindow.loadURL("http://localhost:5173"); //
+    } else {
+      mainWindow.loadFile(path.join(__dirname, "dist/index.html")); // [cite: 25]
+    }
+  }, 3000);
+
   if (process.env.NODE_ENV === "development") {
     mainWindow.loadURL("http://localhost:5173");
   } else {
