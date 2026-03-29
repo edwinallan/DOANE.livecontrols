@@ -33,6 +33,11 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
+  // Streaming State
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamBitrate, setStreamBitrate] = useState(0);
+  const streamMetricsRef = useRef({ bytes: 0, time: 0 });
+
   // Auto-Switcher State
   const [autoSwitch, setAutoSwitch] = useState(false);
   const [autoSwitchMobile, setAutoSwitchMobile] = useState(false);
@@ -84,7 +89,6 @@ export default function App() {
   };
 
   // --- OBS CONNECTION & POLLING ---
-  // --- OBS CONNECTION & POLLING ---
   useEffect(() => {
     let isMounted = true;
     let reconnectTimer;
@@ -94,6 +98,7 @@ export default function App() {
     // Named event handlers so we can remove them safely
     const onConnectionClosed = () => {
       if (isMounted) {
+        console.log("[OBS] Connection lost. Retrying in 3 seconds...");
         setObsConnected(false);
         isPolling = false;
         clearTimeout(pollTimer);
@@ -105,9 +110,20 @@ export default function App() {
       if (isMounted) setActiveScene(data.sceneName);
     };
 
+    const onStreamStateChanged = (data) => {
+      if (isMounted) {
+        setIsStreaming(data.outputActive);
+        if (!data.outputActive) {
+          setStreamBitrate(0);
+          streamMetricsRef.current = { bytes: 0, time: 0 };
+        }
+      }
+    };
+
     const pollMediaStatus = async () => {
       if (!isMounted || !isPolling) return;
 
+      // 1. Poll Source Connection States
       const sources = ["Tail A", "Tail B", "Mobile SRT"];
       let updated = false;
       const nextState = { ...sourcesConnectedRef.current };
@@ -120,6 +136,9 @@ export default function App() {
           const isPlaying = mediaState === "OBS_MEDIA_STATE_PLAYING";
 
           if (nextState[source] !== isPlaying) {
+            console.log(
+              `[Media Status Change] ${source} changed to: ${mediaState}`,
+            );
             nextState[source] = isPlaying;
             updated = true;
 
@@ -129,6 +148,9 @@ export default function App() {
               source === "Mobile SRT" &&
               autoSwitchMobileRef.current
             ) {
+              console.log(
+                "[Auto-Switch] Forcing Mobile SRT because it started playing.",
+              );
               handleSceneChange("Mobile");
             }
 
@@ -140,12 +162,18 @@ export default function App() {
                 currentScene === "CAM 1" &&
                 nextState["Tail B"]
               ) {
+                console.log(
+                  "[Auto-Switch] Tail A died. Falling back to CAM 2.",
+                );
                 handleSceneChange("CAM 2");
               } else if (
                 source === "Tail B" &&
                 currentScene === "CAM 2" &&
                 nextState["Tail A"]
               ) {
+                console.log(
+                  "[Auto-Switch] Tail B died. Falling back to CAM 1.",
+                );
                 handleSceneChange("CAM 1");
               }
             }
@@ -158,6 +186,29 @@ export default function App() {
       if (updated && isMounted) {
         setSourcesConnected(nextState);
       }
+
+      // 2. Poll Stream Bitrate
+      try {
+        const streamStatus = await obs.call("GetStreamStatus");
+        if (streamStatus.outputActive) {
+          const now = Date.now();
+          const currentBytes = streamStatus.outputBytes;
+          const { bytes: lastBytes, time: lastTime } = streamMetricsRef.current;
+
+          if (lastTime > 0 && currentBytes > lastBytes) {
+            const timeDiffSec = (now - lastTime) / 1000;
+            if (timeDiffSec >= 1) {
+              // Calculate approx every 1+ seconds
+              const bits = (currentBytes - lastBytes) * 8;
+              const kbps = Math.round(bits / 1000 / timeDiffSec);
+              if (isMounted) setStreamBitrate(kbps);
+              streamMetricsRef.current = { bytes: currentBytes, time: now };
+            }
+          } else if (lastTime === 0) {
+            streamMetricsRef.current = { bytes: currentBytes, time: now };
+          }
+        }
+      } catch (err) {}
 
       // Recursively queue the next poll only after this one finishes
       if (isPolling) {
@@ -173,18 +224,25 @@ export default function App() {
         );
 
         if (isMounted) {
+          console.log("[OBS] ✅ Successfully connected to OBS WebSocket!");
           setObsConnected(true);
+
+          // Get Initial Scene
           const { currentProgramSceneName } = await obs.call(
             "GetCurrentProgramScene",
           );
           setActiveScene(currentProgramSceneName);
+
+          // Get Initial Stream Status
+          const streamStatus = await obs.call("GetStreamStatus");
+          setIsStreaming(streamStatus.outputActive);
 
           // Start polling once connected
           isPolling = true;
           pollTimer = setTimeout(pollMediaStatus, 1000);
         }
       } catch (err) {
-        console.warn("OBS connection failed:", err.message);
+        console.warn("[OBS] Connection failed:", err.message);
         try {
           await obs.disconnect();
         } catch (e) {}
@@ -198,6 +256,7 @@ export default function App() {
 
     obs.on("ConnectionClosed", onConnectionClosed);
     obs.on("CurrentProgramSceneChanged", onSceneChanged);
+    obs.on("StreamStateChanged", onStreamStateChanged);
 
     connectOBS();
 
@@ -210,6 +269,7 @@ export default function App() {
       // CAREFUL REMOVAL: Only strip the events we explicitly attached!
       obs.off("ConnectionClosed", onConnectionClosed);
       obs.off("CurrentProgramSceneChanged", onSceneChanged);
+      obs.off("StreamStateChanged", onStreamStateChanged);
 
       obs.disconnect().catch(() => {});
     };
@@ -218,7 +278,9 @@ export default function App() {
   // --- ACTIONS ---
   const handleSceneChange = async (sceneName) => {
     if (!obsConnected) {
-      console.warn("OBS is not connected! Auto-switch skipped.");
+      console.warn(
+        `[Auto-switch / Manual] Skipped scene change to '${sceneName}' because OBS is not connected.`,
+      );
       return;
     }
     try {
@@ -235,8 +297,25 @@ export default function App() {
     sendOSC("/OBSBOT/Camera/TailAir/SetRecording", newState ? 1 : 0);
   };
 
+  const handleToggleStream = async () => {
+    if (!obsConnected) return;
+    try {
+      await obs.call("ToggleStream");
+    } catch (err) {
+      console.error("Failed to toggle stream:", err);
+    }
+  };
+
   const sendOSC = (address, value) => {
-    if (selectedCams.length === 0) return;
+    if (selectedCams.length === 0) {
+      console.warn(
+        `[OSC Blocked] Tried to send ${address} but no cameras are selected!`,
+      );
+      return;
+    }
+    console.log(
+      `[OSC Send] 📡 Target(s): ${selectedCams.join(", ")} | Command: ${address} | Value: ${value}`,
+    );
     ipcRenderer.send("send-osc", { targets: selectedCams, address, value });
   };
 
@@ -245,9 +324,16 @@ export default function App() {
     if (selectedCams.length === 0) return;
     isSavingRef.current = false;
 
+    console.log(
+      `[Preset] Mouse down. Holding to save P${presetId} for ${selectedCams.join(", ")}...`,
+    );
+
     // Hold for 1 second to save
     holdTimerRef.current = setTimeout(() => {
       isSavingRef.current = true;
+      console.log(
+        `[Preset] 💾 1-second hold reached! Sending save request for P${presetId}.`,
+      );
       ipcRenderer.send("save-preset", { targets: selectedCams, presetId });
 
       // Visual feedback
@@ -262,7 +348,14 @@ export default function App() {
 
     // If we didn't hold long enough to trigger a save, it's a load request
     if (!isSavingRef.current) {
+      console.log(
+        `[Preset] 🚀 Mouse released early. Loading P${presetId} for ${selectedCams.join(", ")}.`,
+      );
       ipcRenderer.send("load-preset", { targets: selectedCams, presetId });
+    } else {
+      console.log(
+        `[Preset] Mouse released after save completed. (Load action ignored).`,
+      );
     }
   };
 
@@ -410,12 +503,21 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex-row" style={{ marginTop: "auto" }}>
-          <button className="btn red" style={{ flex: 1 }}>
-            YOUTUBE
-          </button>
-          <button className="btn" style={{ flex: 1 }} disabled>
-            INSTA
+        {/* Streaming Toggle Button */}
+        <div style={{ marginTop: "auto" }}>
+          <button
+            onClick={handleToggleStream}
+            className={`btn flex-col ${isStreaming ? "red active" : ""}`}
+            style={{ width: "100%", gap: "2px", padding: "12px" }}
+          >
+            <span style={{ fontSize: "16px", fontWeight: "bold" }}>
+              {isStreaming ? "STOP STREAMING" : "START STREAMING"}
+            </span>
+            {isStreaming && (
+              <span style={{ fontSize: "12px", fontWeight: "normal" }}>
+                {streamBitrate} kbps
+              </span>
+            )}
           </button>
         </div>
       </div>
