@@ -3,11 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "commonjs",
-  "main": "main.cjs",
+  "main": "server.js",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
+    "dev": "concurrently -k \"vite --host\" \"node server.js\"",
     "build": "vite build",
-    "start": "cross-env NODE_ENV=production electron ."
+    "start": "node server.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",

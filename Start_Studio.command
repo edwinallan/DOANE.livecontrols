@@ -42,7 +42,7 @@ GIT_OUTPUT=$(git pull origin main)
 # Print the git output so you can still see it in the terminal
 echo "$GIT_OUTPUT"
 
-# Navigate into the Vite app directory
+# Navigate into the app directory (adjust this if your folder name is different)
 cd tail-air-controller || { echo "❌ App directory not found!"; exit 1; }
 
 # Check if git is up to date AND that the build folders actually exist
@@ -62,5 +62,5 @@ else
     npm run build
 fi
 
-echo "🚀 Starting Studio App..."
-npm run start
+echo "🚀 Starting Headless Node Server..."
+node server.js
