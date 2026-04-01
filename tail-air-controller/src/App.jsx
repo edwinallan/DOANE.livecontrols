@@ -71,20 +71,30 @@ export default function App() {
     return `${m}:${s}`;
   };
 
+  // --- IPC LISTENER FOR TAIL A & B (OSC HEARTBEAT) ---
+  useEffect(() => {
+    const handleCamStatus = (e, statusUpdate) => {
+      console.log("[Heartbeat received]", statusUpdate);
+      setSourcesConnected((prev) => ({ ...prev, ...statusUpdate }));
+    };
+    ipcRenderer.on("camera-status", handleCamStatus);
+    return () => ipcRenderer.removeAllListeners("camera-status");
+  }, []);
+
   // --- OBS CONNECTION & POLLING ---
   useEffect(() => {
     let isMounted = true;
     let reconnectTimer;
     let pollTimer;
     let isPolling = false;
+    let mobileAudioTimeout;
 
     const onConnectionClosed = () => {
       if (isMounted) {
-        console.log("[OBS] Connection lost. Retrying in 3 seconds...");
         setObsConnected(false);
         isPolling = false;
         clearTimeout(pollTimer);
-        clearTimeout(reconnectTimer); // Prevent overlapping timers
+        clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(connectOBS, 3000);
       }
     };
@@ -96,71 +106,41 @@ export default function App() {
     const onStreamStateChanged = (data) => {
       if (isMounted) {
         setIsStreaming(data.outputActive);
-        if (!data.outputActive) {
-          setStreamBitrate(0);
-          streamMetricsRef.current = { bytes: 0, time: 0 };
+        if (!data.outputActive) setStreamBitrate(0);
+      }
+    };
+
+    // --- NEW: MOBILE SRT AUDIO METER HACK ---
+    const onInputVolumeMeters = (data) => {
+      if (!isMounted) return;
+
+      const mobileInput = data.inputs.find((i) => i.inputName === "Mobile SRT");
+      if (mobileInput) {
+        // level[1] is the peak audio level. If it's > 0.0001, data is flowing!
+        const hasAudioData = mobileInput.inputLevelsMul.some(
+          (level) => level[1] > 0.0001,
+        );
+
+        if (hasAudioData) {
+          // It's ALIVE! Set to true if it isn't already.
+          setSourcesConnected((prev) =>
+            prev["Mobile SRT"] ? prev : { ...prev, "Mobile SRT": true },
+          );
+
+          // Reset the kill-switch timer
+          clearTimeout(mobileAudioTimeout);
+
+          // If 2 seconds pass with NO audio data, consider it dead
+          mobileAudioTimeout = setTimeout(() => {
+            setSourcesConnected((prev) => ({ ...prev, "Mobile SRT": false }));
+          }, 2000);
         }
       }
     };
 
-    const pollMediaStatus = async () => {
+    // We still need to poll stream bitrate manually
+    const pollStreamBitrate = async () => {
       if (!isMounted || !isPolling) return;
-      const sources = ["Tail A", "Tail B", "Mobile SRT"];
-      let updated = false;
-      const nextState = { ...sourcesConnectedRef.current };
-
-      for (const source of sources) {
-        try {
-          const { mediaState } = await obs.call("GetMediaInputStatus", {
-            inputName: source,
-          });
-          const isPlaying = mediaState === "OBS_MEDIA_STATE_PLAYING";
-
-          if (nextState[source] !== isPlaying) {
-            console.log(
-              `[Media Status Change] ${source} changed to: ${mediaState}`,
-            );
-            nextState[source] = isPlaying;
-            updated = true;
-
-            if (
-              isPlaying &&
-              source === "Mobile SRT" &&
-              autoSwitchMobileRef.current
-            ) {
-              console.log(
-                "[Auto-Switch] Forcing Mobile SRT because it started playing.",
-              );
-              handleSceneChange("Mobile");
-            }
-            if (!isPlaying) {
-              const currentScene = activeSceneRef.current;
-              if (
-                source === "Tail A" &&
-                currentScene === "CAM 1" &&
-                nextState["Tail B"]
-              ) {
-                console.log(
-                  "[Auto-Switch] Tail A died. Falling back to CAM 2.",
-                );
-                handleSceneChange("CAM 2");
-              } else if (
-                source === "Tail B" &&
-                currentScene === "CAM 2" &&
-                nextState["Tail A"]
-              ) {
-                console.log(
-                  "[Auto-Switch] Tail B died. Falling back to CAM 1.",
-                );
-                handleSceneChange("CAM 1");
-              }
-            }
-          }
-        } catch (err) {}
-      }
-
-      if (updated && isMounted) setSourcesConnected(nextState);
-
       try {
         const streamStatus = await obs.call("GetStreamStatus");
         if (streamStatus.outputActive) {
@@ -183,19 +163,22 @@ export default function App() {
         }
       } catch (err) {}
 
-      if (isPolling) pollTimer = setTimeout(pollMediaStatus, 1000);
+      if (isPolling) pollTimer = setTimeout(pollStreamBitrate, 1000);
     };
 
     const connectOBS = async () => {
-      clearTimeout(reconnectTimer); // Ensure no runaway duplicate loops
-
+      clearTimeout(reconnectTimer);
       try {
+        // We pass 66559 to subscribe to standard events (1023) PLUS Volume Meters (65536)
         await obs.connect(
           "ws://127.0.0.1:4455",
           import.meta.env.VITE_OBS_PASSWORD,
+          {
+            eventSubscriptions: 66559,
+          },
         );
+
         if (isMounted) {
-          console.log("[OBS] ✅ Successfully connected to OBS WebSocket!");
           setObsConnected(true);
           const { currentProgramSceneName } = await obs.call(
             "GetCurrentProgramScene",
@@ -205,12 +188,10 @@ export default function App() {
           setIsStreaming(streamStatus.outputActive);
 
           isPolling = true;
-          clearTimeout(pollTimer); // Clear before starting a new one
-          pollTimer = setTimeout(pollMediaStatus, 1000);
+          clearTimeout(pollTimer);
+          pollTimer = setTimeout(pollStreamBitrate, 1000);
         }
       } catch (err) {
-        console.warn("[OBS] Connection failed:", err.message);
-        // REMOVED: obs.disconnect() to avoid triggering the onConnectionClosed event loop
         if (isMounted) {
           setObsConnected(false);
           reconnectTimer = setTimeout(connectOBS, 3000);
@@ -221,6 +202,8 @@ export default function App() {
     obs.on("ConnectionClosed", onConnectionClosed);
     obs.on("CurrentProgramSceneChanged", onSceneChanged);
     obs.on("StreamStateChanged", onStreamStateChanged);
+    obs.on("InputVolumeMeters", onInputVolumeMeters); // Listen for Audio!
+
     connectOBS();
 
     return () => {
@@ -228,9 +211,13 @@ export default function App() {
       isPolling = false;
       clearTimeout(reconnectTimer);
       clearTimeout(pollTimer);
+      clearTimeout(mobileAudioTimeout);
+
       obs.off("ConnectionClosed", onConnectionClosed);
       obs.off("CurrentProgramSceneChanged", onSceneChanged);
       obs.off("StreamStateChanged", onStreamStateChanged);
+      obs.off("InputVolumeMeters", onInputVolumeMeters);
+
       obs.disconnect().catch(() => {});
     };
   }, []);

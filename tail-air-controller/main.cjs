@@ -6,11 +6,13 @@ const { exec } = require("child_process");
 const { Client, Server } = require("node-osc");
 const sqlite3 = require("sqlite3").verbose();
 const { default: OBSWebSocket } = require("obs-websocket-js");
+const net = require("net"); // Used for the rock-solid TCP heartbeat
 
-// OSC Clients (Empty initially, populated dynamically from OBS)
+// OSC Clients & IP Storage
 let oscClients = {};
+let camIPs = { "Tail A": null, "Tail B": null };
 
-// OSC Server (Listening on port 57120 for replies)
+// OSC Server (Listening on port 57120 for preset replies)
 const oscServer = new Server(57120, "0.0.0.0", () => {
   console.log("OSC Server is listening on port 57120");
 });
@@ -24,14 +26,53 @@ db.run(
 );
 
 let mainWindow;
-let pendingPresetSaves = {}; // Tracks which camera is currently trying to save a preset
+let pendingPresetSaves = {};
 
-// Listen for incoming OSC messages from cameras
+// --- TCP HEARTBEAT LOOP (100% RELIABLE) ---
+function checkDeviceAlive(ip) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(1500); // 1.5 second timeout
+
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve(true); // Port 554 is open!
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+
+    // Check the RTSP streaming port that OBS uses
+    socket.connect(554, ip);
+  });
+}
+
+setInterval(async () => {
+  let statusUpdate = {};
+  for (const cam of Object.keys(camIPs)) {
+    if (camIPs[cam]) {
+      statusUpdate[cam] = await checkDeviceAlive(camIPs[cam]);
+    } else {
+      statusUpdate[cam] = false;
+    }
+  }
+
+  // Send the true/false states to the React frontend
+  if (mainWindow) {
+    mainWindow.webContents.send("camera-status", statusUpdate);
+  }
+}, 2000); // Ping every 2 seconds
+
+// Listen for incoming OSC messages (for preset saving)
 oscServer.on("message", (msg, rinfo) => {
   const address = msg[0];
   const args = msg.slice(1);
 
-  // Identify which camera replied based on the dynamically stored IPs
   let cam = null;
   for (const [camName, client] of Object.entries(oscClients)) {
     if (client.host === rinfo.address) {
@@ -45,14 +86,12 @@ oscServer.on("message", (msg, rinfo) => {
   if (!pending) return;
 
   if (address === "/OBSBOT/WebCam/General/GimbalPosInfo") {
-    // Assuming standard reply address
-    pending.pan = args[0]; // Yaw/Pan
-    pending.tilt = args[1]; // Pitch/Tilt
+    pending.pan = args[0];
+    pending.tilt = args[1];
   } else if (address === "/OBSBOT/WebCam/General/ZoomInfo") {
-    pending.zoom = args[0]; // Zoom percentage
+    pending.zoom = args[0];
   }
 
-  // Once we have both coordinates, save to SQLite
   if (pending.pan !== undefined && pending.zoom !== undefined) {
     db.run(
       `INSERT OR REPLACE INTO presets (cam, presetId, pan, tilt, zoom) VALUES (?, ?, ?, ?, ?)`,
@@ -62,7 +101,7 @@ oscServer.on("message", (msg, rinfo) => {
         else console.log(`Saved Preset ${pending.presetId} for ${cam}`);
       },
     );
-    delete pendingPresetSaves[cam]; // Clear pending state
+    delete pendingPresetSaves[cam];
   }
 });
 
@@ -71,15 +110,12 @@ const obs = new OBSWebSocket();
 
 async function setupDynamicOSC() {
   try {
-    // Grab the password from the .env file
     const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
-
-    // Connect using the password
     await obs.connect("ws://127.0.0.1:4455", obsPassword);
     console.log("[Node] Connected to OBS. Fetching Camera IPs...");
 
     const cams = ["Tail A", "Tail B"];
-    const ipv4Regex = /\b(?:\d{1,3}\.){3}\d{1,3}\b/; // Regex to find an IP address
+    const ipv4Regex = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
 
     for (const cam of cams) {
       try {
@@ -91,13 +127,13 @@ async function setupDynamicOSC() {
 
         if (match) {
           const ip = match[0];
+          camIPs[cam] = ip; // Store for the new heartbeat
           console.log(`[OSC] Successfully mapped ${cam} to IP: ${ip}`);
 
-          // Close old connection if it exists to prevent memory leaks
           if (oscClients[cam]) oscClients[cam].close();
           oscClients[cam] = new Client(ip, 57110);
 
-          // Run the camera init sequence now that we have the IP
+          // Init sequence
           sendOSC(cam, "/OBSBOT/WebCam/General/SetZoomMin", 1);
           sendOSC(cam, "/OBSBOT/WebCam/General/ResetGimbal", 1);
           sendOSC(cam, "/OBSBOT/WebCam/General/SetAutoFocus", 1);
@@ -107,7 +143,7 @@ async function setupDynamicOSC() {
           sendOSC(cam, "/OBSBOT/Camera/TailAir/SetTrackingSpeed", 2);
         } else {
           console.warn(
-            `[OSC] No IP address found inside the OBS settings for ${cam}.`,
+            `[OSC] No IP address found inside OBS settings for ${cam}.`,
           );
         }
       } catch (err) {
@@ -130,7 +166,7 @@ function createWindow() {
   const winHeight = 650;
 
   mainWindow = new BrowserWindow({
-    title: "DOANE.live", // Updated Window Title
+    title: "DOANE.live",
     width: winWidth,
     height: winHeight,
     x: 0,
@@ -140,28 +176,25 @@ function createWindow() {
 
   exec("open -a OBS");
 
-  // Add a 3-second delay to let OBS fully initialize its WebSocket server
   setTimeout(() => {
     if (process.env.NODE_ENV === "development") {
       mainWindow.loadURL("http://localhost:5173");
     } else {
       mainWindow.loadFile(path.join(__dirname, "dist/index.html"));
     }
-
-    // Start the OBS connection loop from the backend
     setupDynamicOSC();
   }, 3000);
 }
 
-// Safely send OSC messages only if the client exists
+// Fixed: Spread arguments correctly for node-osc!
 function sendOSC(camera, address, ...args) {
   if (!oscClients[camera]) {
     console.warn(
-      `[Warning] Cannot send OSC: Client for ${camera} is not initialized. Is the IP in OBS correct?`,
+      `[Warning] Cannot send OSC: Client for ${camera} is not initialized.`,
     );
     return;
   }
-  oscClients[camera].send({ address, args }, (err) => {
+  oscClients[camera].send(address, ...args, (err) => {
     if (err) console.error(`OSC Error (${camera}):`, err);
   });
 }
@@ -171,7 +204,6 @@ ipcMain.on("send-osc", (e, { targets, address, value }) => {
   targets.forEach((target) => sendOSC(target, address, value));
 });
 
-// Trigger a save sequence
 ipcMain.on("save-preset", (e, { targets, presetId }) => {
   targets.forEach((cam) => {
     pendingPresetSaves[cam] = {
@@ -180,13 +212,11 @@ ipcMain.on("save-preset", (e, { targets, presetId }) => {
       tilt: undefined,
       zoom: undefined,
     };
-    // Ask camera for current info
     sendOSC(cam, "/OBSBOT/WebCam/General/GetGimbalPosInfo", 1);
     sendOSC(cam, "/OBSBOT/WebCam/General/GetZoomInfo", 1);
   });
 });
 
-// Load a preset
 ipcMain.on("load-preset", (e, { targets, presetId }) => {
   targets.forEach((cam) => {
     db.get(
@@ -194,14 +224,13 @@ ipcMain.on("load-preset", (e, { targets, presetId }) => {
       [cam, presetId],
       (err, row) => {
         if (row) {
-          // Send load commands
           sendOSC(
             cam,
             "/OBSBOT/WebCam/General/SetGimMotorDegree",
             row.pan,
             row.tilt,
             0,
-          ); // Yaw, Pitch, Roll
+          );
           sendOSC(cam, "/OBSBOT/WebCam/General/SetZoom", row.zoom);
         }
       },
