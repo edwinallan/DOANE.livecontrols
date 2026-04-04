@@ -115,23 +115,30 @@ setInterval(async () => {
 }, 2000);
 
 // --- OBS CONNECTION & LOGIC ---
-const obs = new OBSWebSocket();
+const obsMain = new OBSWebSocket();
+const obsAudio = new OBSWebSocket();
 let mobileAudioTimeout;
 let autoSwitchTimer;
 
 async function connectOBS() {
   try {
     const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
-    await obs.connect("ws://127.0.0.1:4455", obsPassword, {
-      eventSubscriptions: 66559,
+
+    // Connect Main OBS (Default low-volume events: scenes, stream status)
+    await obsMain.connect("ws://127.0.0.1:4455", obsPassword);
+
+    // Connect Audio-Only OBS (Strictly for InputVolumeMeters -> 65536)
+    await obsAudio.connect("ws://127.0.0.1:4455", obsPassword, {
+      eventSubscriptions: 65536,
     });
+
     state.obsConnected = true;
 
-    const { currentProgramSceneName } = await obs.call(
+    const { currentProgramSceneName } = await obsMain.call(
       "GetCurrentProgramScene",
     );
     state.activeScene = currentProgramSceneName;
-    const streamStatus = await obs.call("GetStreamStatus");
+    const streamStatus = await obsMain.call("GetStreamStatus");
     state.isStreaming = streamStatus.outputActive;
     io.emit("state-update", state);
 
@@ -147,7 +154,7 @@ async function fetchCameraIPs() {
   const ipv4Regex = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
   for (const cam of ["Tail A", "Tail B"]) {
     try {
-      const { inputSettings } = await obs.call("GetInputSettings", {
+      const { inputSettings } = await obsMain.call("GetInputSettings", {
         inputName: cam,
       });
       const match = JSON.stringify(inputSettings).match(ipv4Regex);
@@ -164,21 +171,25 @@ async function fetchCameraIPs() {
   }
 }
 
-// OBS Events
-obs.on("ConnectionClosed", () => {
+// Main OBS Events
+obsMain.on("ConnectionClosed", () => {
   state.obsConnected = false;
   io.emit("state-update", state);
   setTimeout(connectOBS, 3000);
 });
-obs.on("CurrentProgramSceneChanged", (data) => {
+
+obsMain.on("CurrentProgramSceneChanged", (data) => {
   state.activeScene = data.sceneName;
   io.emit("state-update", state);
 });
-obs.on("StreamStateChanged", (data) => {
+
+obsMain.on("StreamStateChanged", (data) => {
   state.isStreaming = data.outputActive;
   io.emit("state-update", state);
 });
-obs.on("InputVolumeMeters", (data) => {
+
+// Audio OBS Events (Listen to the firehose here)
+obsAudio.on("InputVolumeMeters", (data) => {
   const mobileInput = data.inputs.find((i) => i.inputName === "Mobile SRT");
   if (mobileInput && mobileInput.inputLevelsMul.some((l) => l[1] > 0.0001)) {
     if (!state.sourcesConnected["Mobile SRT"]) {
@@ -203,7 +214,7 @@ setInterval(async () => {
   isFetchingScreenshot = true; // Lock the door
 
   try {
-    const res = await obs.call("GetSourceScreenshot", {
+    const res = await obsMain.call("GetSourceScreenshot", {
       sourceName: state.activeScene,
       imageFormat: "jpeg",
       // Lowered resolution slightly to save network bandwidth to the iPad
@@ -236,7 +247,7 @@ function scheduleNextSwitch() {
 
   autoSwitchTimer = setTimeout(async () => {
     if (state.autoSwitch.mobile && state.sourcesConnected["Mobile SRT"]) {
-      await obs
+      await obsMain
         .call("SetCurrentProgramScene", { sceneName: "Mobile" })
         .catch(() => {});
     } else {
@@ -248,7 +259,7 @@ function scheduleNextSwitch() {
       if (available.length > 0) {
         const nextScene =
           available[Math.floor(Math.random() * available.length)];
-        await obs
+        await obsMain
           .call("SetCurrentProgramScene", { sceneName: nextScene })
           .catch(() => {});
       }
@@ -264,11 +275,13 @@ io.on("connection", (socket) => {
 
   socket.on("set-scene", async (sceneName) => {
     if (state.obsConnected)
-      await obs.call("SetCurrentProgramScene", { sceneName }).catch(() => {});
+      await obsMain
+        .call("SetCurrentProgramScene", { sceneName })
+        .catch(() => {});
   });
 
   socket.on("toggle-stream", async () => {
-    if (state.obsConnected) await obs.call("ToggleStream").catch(() => {});
+    if (state.obsConnected) await obsMain.call("ToggleStream").catch(() => {});
   });
 
   socket.on("update-autoswitch", (config) => {
