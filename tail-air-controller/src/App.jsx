@@ -36,6 +36,9 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
+  // Accordion UI State
+  const [expandedPanel, setExpandedPanel] = useState("camera"); // "camera" or "youtube"
+
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
 
@@ -133,31 +136,38 @@ export default function App() {
         handleToggleStream={handleToggleStream}
       />
 
-      <CameraPanel
-        selectedCams={selectedCams}
-        setSelectedCams={setSelectedCams}
-        sendOSC={sendOSC}
-        isRecording={isRecording}
-        toggleRecording={toggleRecording}
-        recordingTime={recordingTime}
-        formatTime={formatTime}
-        isMuted={isMuted}
-        setIsMuted={setIsMuted}
-        zoomLevel={zoomLevel}
-        setZoomLevel={setZoomLevel}
-        handlePresetDown={handlePresetDown}
-        handlePresetUp={handlePresetUp}
-        holdTimerRef={holdTimerRef}
-        savingPreset={savingPreset}
-      />
+      {/* Accordion Wrapper Container */}
+      <div className="flex flex-1 gap-4 min-w-0">
+        <CameraPanel
+          isExpanded={expandedPanel === "camera"}
+          onExpand={() => setExpandedPanel("camera")}
+          selectedCams={selectedCams}
+          setSelectedCams={setSelectedCams}
+          sendOSC={sendOSC}
+          isRecording={isRecording}
+          toggleRecording={toggleRecording}
+          recordingTime={recordingTime}
+          formatTime={formatTime}
+          isMuted={isMuted}
+          setIsMuted={setIsMuted}
+          zoomLevel={zoomLevel}
+          setZoomLevel={setZoomLevel}
+          handlePresetDown={handlePresetDown}
+          handlePresetUp={handlePresetUp}
+          holdTimerRef={holdTimerRef}
+          savingPreset={savingPreset}
+        />
 
-      <YouTubePanel
-        state={state}
-        ytChatMessages={ytChatMessages}
-        handleStartYTStream={handleStartYTStream}
-        handleGoLiveYT={handleGoLiveYT}
-        backendUrl={backendUrl}
-      />
+        <YouTubePanel
+          isExpanded={expandedPanel === "youtube"}
+          onExpand={() => setExpandedPanel("youtube")}
+          state={state}
+          ytChatMessages={ytChatMessages}
+          handleStartYTStream={handleStartYTStream}
+          handleGoLiveYT={handleGoLiveYT}
+          backendUrl={backendUrl}
+        />
+      </div>
     </div>
   );
 }

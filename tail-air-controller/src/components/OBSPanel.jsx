@@ -1,6 +1,60 @@
 import React from "react";
-import { ChevronUp, ChevronDown, Radio, ImageOff } from "lucide-react";
-import staticGlitch from "../assets/static-glitch.gif"; // Import the local GIF
+import { Plus, Minus, Radio, ImageOff } from "lucide-react";
+import staticGlitch from "../assets/static-glitch.gif";
+
+const SceneButton = ({
+  sceneName,
+  displayName,
+  sourceKey,
+  spanCol,
+  isOnline,
+  isActive,
+  screenshot,
+  handleSceneChange,
+}) => {
+  const bgImage = isOnline && screenshot ? screenshot : staticGlitch;
+
+  return (
+    <button
+      onClick={() => isOnline && handleSceneChange(sceneName)}
+      disabled={!isOnline}
+      className={`relative w-full block h-0 pb-[56.25%] bg-zinc-800 rounded-xl overflow-hidden border-2 transition-all group shrink-0 ${
+        spanCol ? "col-span-2" : "col-span-1"
+      } ${
+        isActive
+          ? "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]"
+          : "border-zinc-700 hover:border-zinc-500"
+      } ${!isOnline ? "opacity-50 grayscale cursor-not-allowed" : ""}`}
+    >
+      {bgImage ? (
+        <img
+          src={bgImage}
+          alt={displayName}
+          className="absolute inset-0 w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+          draggable={false}
+          onError={(e) => (e.target.style.display = "none")}
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center text-zinc-600">
+          <ImageOff size={32} />
+        </div>
+      )}
+
+      <div className="absolute top-2 left-2 flex items-center gap-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/10">
+        <div
+          className={`w-2.5 h-2.5 rounded-full shadow-lg shrink-0 ${
+            isOnline
+              ? "bg-green-500 shadow-[0_0_8px_#22c55e]"
+              : "bg-red-500 shadow-[0_0_8px_#ef4444]"
+          }`}
+        ></div>
+        <span className="text-xs font-bold text-white drop-shadow-md truncate">
+          {displayName}
+        </span>
+      </div>
+    </button>
+  );
+};
 
 export default function OBSPanel({
   state,
@@ -16,58 +70,6 @@ export default function OBSPanel({
     autoSwitch,
     isStreaming,
   } = state;
-
-  const SceneButton = ({ sceneName, displayName, sourceKey, spanCol }) => {
-    const isOnline = sourcesConnected[sourceKey];
-
-    // Fallback to the local GIF if the camera is offline or has no screenshot
-    const bgImage =
-      isOnline && obsScreenshots[sceneName]
-        ? obsScreenshots[sceneName]
-        : staticGlitch;
-
-    const isActive = activeScene === sceneName;
-
-    return (
-      <button
-        onClick={() => isOnline && handleSceneChange(sceneName)}
-        disabled={!isOnline}
-        // Removed `aspect-video`, added `block h-0 pb-[56.25%]` for iOS 12 support (16:9 ratio hack)
-        className={`relative w-full block h-0 pb-[56.25%] bg-zinc-800 rounded-xl overflow-hidden border-2 transition-all group shrink-0 ${
-          spanCol ? "col-span-2" : "col-span-1"
-        } ${isActive ? "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]" : "border-zinc-700 hover:border-zinc-500"} ${
-          !isOnline ? "opacity-50 grayscale cursor-not-allowed" : ""
-        }`}
-      >
-        {bgImage ? (
-          <img
-            src={bgImage}
-            alt={displayName}
-            className="absolute inset-0 w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-            draggable={false}
-            onError={(e) => (e.target.style.display = "none")}
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-zinc-600">
-            <ImageOff size={32} />
-          </div>
-        )}
-
-        <div className="absolute top-2 left-2 flex items-center gap-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/10">
-          <div
-            className={`w-2.5 h-2.5 rounded-full shadow-lg shrink-0 ${
-              isOnline
-                ? "bg-green-500 shadow-[0_0_8px_#22c55e]"
-                : "bg-red-500 shadow-[0_0_8px_#ef4444]"
-            }`}
-          ></div>
-          <span className="text-xs font-bold text-white drop-shadow-md truncate">
-            {displayName}
-          </span>
-        </div>
-      </button>
-    );
-  };
 
   const adjustSwitchTime = (key, delta) => {
     let newVal = autoSwitch[key] + delta;
@@ -92,17 +94,29 @@ export default function OBSPanel({
           sceneName="CAM 1"
           displayName="Tail A"
           sourceKey="Tail A"
+          isOnline={sourcesConnected["Tail A"]}
+          isActive={activeScene === "CAM 1"}
+          screenshot={obsScreenshots["CAM 1"]}
+          handleSceneChange={handleSceneChange}
         />
         <SceneButton
           sceneName="CAM 2"
           displayName="Tail B"
           sourceKey="Tail B"
+          isOnline={sourcesConnected["Tail B"]}
+          isActive={activeScene === "CAM 2"}
+          screenshot={obsScreenshots["CAM 2"]}
+          handleSceneChange={handleSceneChange}
         />
         <SceneButton
           sceneName="Mobile"
           displayName="Mobile Full"
           sourceKey="Mobile SRT"
           spanCol
+          isOnline={sourcesConnected["Mobile SRT"]}
+          isActive={activeScene === "Mobile"}
+          screenshot={obsScreenshots["Mobile"]}
+          handleSceneChange={handleSceneChange}
         />
       </div>
 
@@ -122,46 +136,51 @@ export default function OBSPanel({
           </label>
         </div>
 
-        <div className="flex justify-around items-center bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-          <div className="flex flex-col items-center">
-            <button
-              onClick={() => adjustSwitchTime("min", 1)}
-              className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 mb-1"
-            >
-              <ChevronUp size={24} />
-            </button>
-            <span className="text-lg font-bold font-mono">
-              {autoSwitch.min}s
-            </span>
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">
+        {/* HORIZONTAL MIN/MAX CONTROLS */}
+        <div className="flex flex-col w-full gap-2">
+          <div className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
+            <span className="text-xs text-zinc-500 uppercase font-bold tracking-widest pl-1">
               Min
             </span>
-            <button
-              onClick={() => adjustSwitchTime("min", -1)}
-              className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 mt-1"
-            >
-              <ChevronDown size={24} />
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => adjustSwitchTime("min", -1)}
+                className="p-1.5 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              >
+                <Minus size={18} />
+              </button>
+              <span className="text-base font-bold font-mono w-8 text-center">
+                {autoSwitch.min}s
+              </span>
+              <button
+                onClick={() => adjustSwitchTime("min", 1)}
+                className="p-1.5 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
-          <div className="flex flex-col items-center">
-            <button
-              onClick={() => adjustSwitchTime("max", 1)}
-              className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 mb-1"
-            >
-              <ChevronUp size={24} />
-            </button>
-            <span className="text-lg font-bold font-mono">
-              {autoSwitch.max}s
-            </span>
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">
+          <div className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
+            <span className="text-xs text-zinc-500 uppercase font-bold tracking-widest pl-1">
               Max
             </span>
-            <button
-              onClick={() => adjustSwitchTime("max", -1)}
-              className="p-2 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 mt-1"
-            >
-              <ChevronDown size={24} />
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => adjustSwitchTime("max", -1)}
+                className="p-1.5 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              >
+                <Minus size={18} />
+              </button>
+              <span className="text-base font-bold font-mono w-8 text-center">
+                {autoSwitch.max}s
+              </span>
+              <button
+                onClick={() => adjustSwitchTime("max", 1)}
+                className="p-1.5 bg-zinc-800 rounded-lg hover:bg-zinc-700 active:bg-zinc-600 transition-colors"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
         </div>
 

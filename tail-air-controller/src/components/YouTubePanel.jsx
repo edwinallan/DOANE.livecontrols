@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 
 export default function YouTubePanel({
+  isExpanded,
+  onExpand,
   state,
   ytChatMessages,
   handleStartYTStream,
@@ -16,7 +18,7 @@ export default function YouTubePanel({
   backendUrl,
 }) {
   const [streamTitle, setStreamTitle] = useState("");
-  const [localAction, setLocalAction] = useState(false); // Instant UI feedback lock
+  const [localAction, setLocalAction] = useState(false);
   const chatRef = useRef(null);
 
   useEffect(() => {
@@ -25,7 +27,6 @@ export default function YouTubePanel({
     }
   }, [ytChatMessages]);
 
-  // Reset local lock if the server transitions state or throws an error
   useEffect(() => {
     if (!state.ytIsTransitioning && state.ytBroadcastStatus === "live") {
       setLocalAction(false);
@@ -35,12 +36,26 @@ export default function YouTubePanel({
     }
   }, [state.ytIsTransitioning, state.ytBroadcastStatus, state.ytErrorMessage]);
 
+  // Collapsed Vertical Bar UI
+  if (!isExpanded) {
+    return (
+      <button
+        onClick={onExpand}
+        className="w-16 shrink-0 bg-zinc-900 rounded-3xl flex flex-col items-center justify-center gap-6 border border-zinc-800 hover:bg-zinc-800 transition-colors shadow-xl h-full"
+      >
+        <Youtube size={28} className="text-zinc-500" />
+        <span className="[writing-mode:vertical-lr] rotate-180 text-zinc-500 font-bold tracking-widest text-lg">
+          YOUTUBE STUDIO
+        </span>
+      </button>
+    );
+  }
+
   const handleGoLiveClick = () => {
-    setLocalAction(true); // Lock button instantly
+    setLocalAction(true);
     handleGoLiveYT();
   };
 
-  // Determine Go Live Button constraints
   const isHealthAcceptable =
     state.ytStreamHealth === "good" || state.ytStreamHealth === "ok";
   const isStreamActive = state.ytStreamStatus === "active";
@@ -60,7 +75,6 @@ export default function YouTubePanel({
     }
   }
 
-  // Visual Health Indicator
   const getHealthUI = () => {
     switch (state.ytStreamHealth) {
       case "good":
@@ -93,9 +107,9 @@ export default function YouTubePanel({
     }
   };
 
+  // Replaced w-[380px] min-w-[380px] with flex-1
   return (
-    <div className="flex flex-col w-[380px] min-w-[380px] bg-zinc-900 rounded-3xl p-5 gap-4 border border-zinc-800 shadow-xl h-full shrink-0 overflow-y-auto relative">
-      {/* ERROR BANNER */}
+    <div className="flex flex-col flex-1 bg-zinc-900 rounded-3xl p-5 gap-4 border border-zinc-800 shadow-xl h-full overflow-y-auto relative">
       {state.ytErrorMessage && (
         <div className="absolute top-4 left-4 right-4 bg-red-950/90 border border-red-500/50 text-red-200 text-xs px-3 py-2 rounded-lg z-50 shadow-xl flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
@@ -105,7 +119,6 @@ export default function YouTubePanel({
         </div>
       )}
 
-      {/* HEADER & CONTROLS */}
       <div className="flex justify-between items-center shrink-0">
         <h2 className="text-xl font-bold flex items-center gap-2">YouTube</h2>
         {!state.ytAuthenticated ? (
@@ -195,7 +208,6 @@ export default function YouTubePanel({
         )}
       </div>
 
-      {/* STREAM TITLE & HEALTH DISPLAY */}
       {state.ytVideoId && (
         <div className="flex justify-between items-center text-[10px] uppercase tracking-wider border-b border-zinc-800 pb-2 shrink-0">
           <div
@@ -208,7 +220,6 @@ export default function YouTubePanel({
         </div>
       )}
 
-      {/* PLAYER */}
       {state.ytVideoId ? (
         <div className="w-full aspect-video bg-black rounded-xl overflow-hidden shrink-0 border border-zinc-800 shadow-lg">
           <iframe
@@ -229,7 +240,6 @@ export default function YouTubePanel({
         </div>
       )}
 
-      {/* CHAT WINDOW */}
       <div className="flex-1 bg-zinc-950 rounded-2xl border border-zinc-800 p-4 overflow-hidden flex flex-col min-h-0 shadow-inner relative">
         <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-zinc-950 to-transparent z-10 pointer-events-none"></div>
         <div

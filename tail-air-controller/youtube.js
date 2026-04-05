@@ -33,6 +33,8 @@ function initYouTube(app, io, state) {
         oauth2Client.setCredentials(tokens);
         state.ytAuthenticated = true;
         console.log("✅ YouTube OAuth tokens loaded.");
+        // FIX: Tell all currently connected clients that we are authenticated!
+        io.emit("state-update", state);
       } catch (e) {
         console.error("Failed to parse stored tokens:", e);
       }
