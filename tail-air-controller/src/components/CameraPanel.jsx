@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React from "react";
 import {
   Mic,
   MicOff,
@@ -16,21 +16,13 @@ import {
   MoveDown,
   MoveLeft,
   MoveRight,
-  RotateCcw,
   Plus,
   Minus,
   Bookmark,
   Lightbulb,
-  PlaySquare,
-  Youtube,
-  ExternalLink,
 } from "lucide-react";
 
 export default function CameraPanel({
-  state,
-  ytChatMessages,
-  handleStartYTStream,
-  backendUrl,
   selectedCams,
   setSelectedCams,
   sendOSC,
@@ -54,17 +46,9 @@ export default function CameraPanel({
   const panelInner =
     "bg-zinc-950 p-4 rounded-2xl border border-zinc-800 shrink-0";
 
-  const [streamTitle, setStreamTitle] = useState("");
-  const chatRef = useRef(null);
-
-  useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
-    }
-  }, [ytChatMessages]);
-
   return (
     <div className="flex-1 bg-zinc-900 rounded-3xl p-5 flex flex-col gap-5 border border-zinc-800 shadow-xl overflow-y-auto min-h-0">
+      {/* CAMERA SELECTOR */}
       <div className="flex bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800 shrink-0">
         {["Tail A", "Tail B"].map((cam) => (
           <button
@@ -83,7 +67,7 @@ export default function CameraPanel({
         ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-5 flex-1 min-h-0">
+      <div className="grid grid-cols-2 gap-5 flex-1 min-h-0">
         {/* COL 1: AI TRACKING & COLOR */}
         <div className="flex flex-col gap-5 min-h-0">
           <div className={`flex flex-col gap-4 ${panelInner} flex-1`}>
@@ -306,108 +290,6 @@ export default function CameraPanel({
                   {savingPreset === preset ? "SAVED" : `P${preset}`}
                 </button>
               ))}
-            </div>
-          </div>
-        </div>
-
-        {/* COL 3: YOUTUBE PLAYER & CHAT */}
-        <div className={`flex flex-col gap-4 ${panelInner} min-h-0`}>
-          <div className="flex justify-between items-center shrink-0">
-            <div className="text-xs uppercase tracking-widest text-zinc-500 font-black">
-              Live Community
-            </div>
-            {!state.ytAuthenticated ? (
-              <a
-                href={`${backendUrl}/auth/youtube`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs bg-red-600 px-3 py-1.5 rounded-md font-bold text-white flex items-center gap-1 hover:bg-red-500"
-              >
-                <Youtube size={14} /> AUTHENTICATE
-              </a>
-            ) : !state.ytVideoId ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Stream Title..."
-                  value={streamTitle}
-                  onChange={(e) => setStreamTitle(e.target.value)}
-                  className="text-xs bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1.5 text-zinc-200 outline-none focus:border-blue-500 w-32"
-                />
-                <button
-                  onClick={() =>
-                    handleStartYTStream(
-                      streamTitle ||
-                        `Live Stream - ${new Date().toLocaleDateString()}`,
-                    )
-                  }
-                  className="text-xs bg-blue-600 px-3 py-1.5 rounded-md font-bold text-white flex items-center gap-1 hover:bg-blue-500"
-                >
-                  <PlaySquare size={14} /> CREATE
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                <span
-                  className="text-xs font-bold text-zinc-300 max-w-[120px] truncate"
-                  title={state.ytStreamTitle}
-                >
-                  {state.ytStreamTitle}
-                </span>
-                <a
-                  href={`https://youtu.be/${state.ytVideoId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1.5 rounded-md font-bold hover:bg-zinc-700 flex items-center gap-1.5 transition-all"
-                >
-                  <ExternalLink size={14} /> APP
-                </a>
-                <span className="text-xs bg-green-600/20 text-green-400 px-2 py-1.5 rounded-md font-bold border border-green-500/20 flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>{" "}
-                  LIVE
-                </span>
-              </div>
-            )}
-          </div>
-
-          {state.ytVideoId ? (
-            <div className="w-full aspect-video bg-black rounded-xl overflow-hidden shrink-0 border border-zinc-800">
-              <iframe
-                width="100%"
-                height="100%"
-                src={`https://www.youtube.com/embed/${state.ytVideoId}?autoplay=1&mute=1`}
-                title="YouTube Stream"
-                frameBorder="0"
-                allowFullScreen
-              ></iframe>
-            </div>
-          ) : (
-            <div className="w-full aspect-video bg-zinc-900 rounded-xl flex items-center justify-center shrink-0 border border-zinc-800">
-              <Youtube size={32} className="text-zinc-700" />
-            </div>
-          )}
-
-          <div className="flex-1 bg-zinc-900 rounded-xl border border-zinc-800 p-3 overflow-hidden flex flex-col min-h-0">
-            <div
-              ref={chatRef}
-              className="flex-1 overflow-y-auto pr-2 space-y-3 flex flex-col scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent"
-            >
-              {ytChatMessages.length === 0 ? (
-                <div className="m-auto text-zinc-600 text-sm italic font-medium">
-                  No live comments yet...
-                </div>
-              ) : (
-                ytChatMessages.map((msg, i) => (
-                  <div key={i} className="text-sm">
-                    <span className="font-bold text-zinc-300 mr-2">
-                      {msg.authorDetails?.displayName}
-                    </span>
-                    <span className="text-zinc-400">
-                      {msg.snippet?.displayMessage}
-                    </span>
-                  </div>
-                ))
-              )}
             </div>
           </div>
         </div>

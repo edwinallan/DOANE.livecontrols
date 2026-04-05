@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import OBSPanel from "./components/OBSPanel";
 import CameraPanel from "./components/CameraPanel";
+import YouTubePanel from "./components/YouTubePanel";
 
 const backendUrl = `http://${window.location.hostname}:4000`;
 const socket = io(backendUrl);
@@ -17,7 +18,13 @@ export default function App() {
     ytAuthenticated: false,
     ytVideoId: null,
     ytLiveChatId: null,
-    ytStreamTitle: "", // <-- Added this
+    ytStreamTitle: "",
+    ytBroadcastStatus: null,
+    ytIsCreating: false,
+    ytIsTransitioning: false,
+    ytStreamHealth: "noData",
+    ytStreamStatus: "inactive",
+    ytErrorMessage: "",
   });
 
   const [obsScreenshots, setObsScreenshots] = useState({});
@@ -80,7 +87,9 @@ export default function App() {
   const handleToggleStream = () => socket.emit("toggle-stream");
   const updateAutoSwitch = (newConfig) =>
     socket.emit("update-autoswitch", newConfig);
+
   const handleStartYTStream = (title) => socket.emit("start-yt-stream", title);
+  const handleGoLiveYT = () => socket.emit("go-live-yt");
 
   const sendOSC = (address, value) => {
     if (selectedCams.length > 0) {
@@ -123,11 +132,8 @@ export default function App() {
         updateAutoSwitch={updateAutoSwitch}
         handleToggleStream={handleToggleStream}
       />
+
       <CameraPanel
-        state={state}
-        ytChatMessages={ytChatMessages}
-        handleStartYTStream={handleStartYTStream}
-        backendUrl={backendUrl}
         selectedCams={selectedCams}
         setSelectedCams={setSelectedCams}
         sendOSC={sendOSC}
@@ -143,6 +149,14 @@ export default function App() {
         handlePresetUp={handlePresetUp}
         holdTimerRef={holdTimerRef}
         savingPreset={savingPreset}
+      />
+
+      <YouTubePanel
+        state={state}
+        ytChatMessages={ytChatMessages}
+        handleStartYTStream={handleStartYTStream}
+        handleGoLiveYT={handleGoLiveYT}
+        backendUrl={backendUrl}
       />
     </div>
   );
