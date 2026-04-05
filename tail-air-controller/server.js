@@ -7,6 +7,7 @@ const sqlite3 = require("sqlite3").verbose();
 const { default: OBSWebSocket } = require("obs-websocket-js");
 const net = require("net");
 const path = require("path");
+const { google } = require("googleapis");
 
 // --- SERVER SETUP ---
 const app = express();
@@ -15,7 +16,6 @@ const io = new SocketIOServer(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
-// Serve the built React app (when running in production)
 app.use(express.static(path.join(__dirname, "dist")));
 
 // --- STATE ---
@@ -27,7 +27,67 @@ let state = {
   isRecording: false,
   sourcesConnected: { "Tail A": false, "Tail B": false, "Mobile SRT": false },
   autoSwitch: { enabled: false, mobile: false, min: 5, max: 15 },
+  ytAuthenticated: false,
+  ytVideoId: null,
+  ytLiveChatId: null,
 };
+
+// --- YOUTUBE API SETUP ---
+const youtube = google.youtube("v3");
+const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:4000";
+const oauth2Client = new google.auth.OAuth2(
+  process.env.YT_CLIENT_ID,
+  process.env.YT_CLIENT_SECRET,
+  `${BACKEND_URL}/oauth2callback`,
+);
+
+app.get("/auth/youtube", (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: [
+      "https://www.googleapis.com/auth/youtube",
+      "https://www.googleapis.com/auth/youtube.force-ssl",
+    ],
+  });
+  res.redirect(url);
+});
+
+app.get("/oauth2callback", async (req, res) => {
+  try {
+    const { tokens } = await oauth2Client.getToken(req.query.code);
+    oauth2Client.setCredentials(tokens);
+    state.ytAuthenticated = true;
+    io.emit("state-update", state);
+    res.send(
+      "<h2>Successfully Authenticated with YouTube!</h2><p>You can close this window and return to the panel.</p>",
+    );
+  } catch (err) {
+    res.status(500).send("Authentication failed.");
+  }
+});
+
+let chatPollInterval;
+let nextChatPageToken = "";
+
+async function startYouTubeChatPolling(liveChatId) {
+  clearInterval(chatPollInterval);
+  chatPollInterval = setInterval(async () => {
+    try {
+      const res = await youtube.liveChatMessages.list({
+        auth: oauth2Client,
+        liveChatId: liveChatId,
+        part: "snippet,authorDetails",
+        pageToken: nextChatPageToken || undefined,
+      });
+      nextChatPageToken = res.data.nextPageToken;
+      if (res.data.items && res.data.items.length > 0) {
+        io.emit("yt-chat-update", res.data.items);
+      }
+    } catch (e) {
+      console.error("YouTube Chat Poll Error:", e.message);
+    }
+  }, 5000); // Poll every 5 seconds per YouTube API limits
+}
 
 // --- OSC & DB SETUP ---
 let oscClients = {};
@@ -44,7 +104,6 @@ const oscServer = new OSCServer(57120, "0.0.0.0", () => {
   console.log("OSC Server listening on port 57120");
 });
 
-// OSC Preset Save Listener
 oscServer.on("message", (msg, rinfo) => {
   const address = msg[0];
   const args = msg.slice(1);
@@ -123,11 +182,7 @@ let autoSwitchTimer;
 async function connectOBS() {
   try {
     const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
-
-    // Connect Main OBS (Default low-volume events: scenes, stream status)
     await obsMain.connect("ws://127.0.0.1:4455", obsPassword);
-
-    // Connect Audio-Only OBS (Strictly for InputVolumeMeters -> 65536)
     await obsAudio.connect("ws://127.0.0.1:4455", obsPassword, {
       eventSubscriptions: 65536,
     });
@@ -162,8 +217,6 @@ async function fetchCameraIPs() {
         camIPs[cam] = match[0];
         if (oscClients[cam]) oscClients[cam].close();
         oscClients[cam] = new Client(match[0], 57110);
-
-        // Init Sequence
         sendOSC(cam, "/OBSBOT/WebCam/General/SetZoomMin", 1);
         sendOSC(cam, "/OBSBOT/WebCam/General/ResetGimbal", 1);
       }
@@ -171,7 +224,6 @@ async function fetchCameraIPs() {
   }
 }
 
-// Main OBS Events
 obsMain.on("ConnectionClosed", () => {
   state.obsConnected = false;
   io.emit("state-update", state);
@@ -188,7 +240,6 @@ obsMain.on("StreamStateChanged", (data) => {
   io.emit("state-update", state);
 });
 
-// Audio OBS Events (Listen to the firehose here)
 obsAudio.on("InputVolumeMeters", (data) => {
   const mobileInput = data.inputs.find((i) => i.inputName === "Mobile SRT");
   if (mobileInput && mobileInput.inputLevelsMul.some((l) => l[1] > 0.0001)) {
@@ -204,41 +255,39 @@ obsAudio.on("InputVolumeMeters", (data) => {
   }
 });
 
-// OBS Screenshot Poller (Polite & Memory Safe)
 let isFetchingScreenshot = false;
-
 setInterval(async () => {
-  // If OBS isn't connected, no scene is active, OR we are already fetching an image, do nothing!
-  if (!state.obsConnected || !state.activeScene || isFetchingScreenshot) return;
-
-  isFetchingScreenshot = true; // Lock the door
-
+  if (
+    !state.obsConnected ||
+    isFetchingScreenshot ||
+    io.engine.clientsCount === 0
+  )
+    return;
+  isFetchingScreenshot = true;
   try {
-    const res = await obsMain.call("GetSourceScreenshot", {
-      sourceName: state.activeScene,
-      imageFormat: "jpeg",
-      // Lowered resolution slightly to save network bandwidth to the iPad
-      imageWidth: 480,
-      imageHeight: 270,
-      imageCompressionQuality: 60,
-    });
-
-    // Only send to clients if someone is actually connected to avoid buffering memory
-    if (io.engine.clientsCount > 0) {
-      io.emit("obs-screenshot", res.imageData);
+    const scenesToFetch = ["CAM 1", "CAM 2", "Mobile"];
+    let screenshots = {};
+    for (const scene of scenesToFetch) {
+      const res = await obsMain
+        .call("GetSourceScreenshot", {
+          sourceName: scene,
+          imageFormat: "jpeg",
+          imageWidth: 480,
+          imageHeight: 270,
+          imageCompressionQuality: 50,
+        })
+        .catch(() => null);
+      if (res && res.imageData) screenshots[scene] = res.imageData;
     }
-  } catch (err) {
-    // Ignore screenshot errors (like if the scene transitions while grabbing)
+    io.emit("obs-screenshots", screenshots);
   } finally {
-    isFetchingScreenshot = false; // Unlock the door for the next second
+    isFetchingScreenshot = false;
   }
 }, 1000);
 
-// --- AUTO SWITCHER LOGIC ---
 function scheduleNextSwitch() {
   clearTimeout(autoSwitchTimer);
   if (!state.autoSwitch.enabled) return;
-
   const delay =
     Math.floor(
       Math.random() * (state.autoSwitch.max - state.autoSwitch.min + 1) +
@@ -268,9 +317,7 @@ function scheduleNextSwitch() {
   }, delay);
 }
 
-// --- SOCKET.IO CLIENT HANDLERS ---
 io.on("connection", (socket) => {
-  console.log("Client connected from iPad");
   socket.emit("state-update", state);
 
   socket.on("set-scene", async (sceneName) => {
@@ -327,9 +374,78 @@ io.on("connection", (socket) => {
       );
     });
   });
+
+  socket.on("start-yt-stream", async (title) => {
+    if (!state.ytAuthenticated) return;
+    try {
+      // 1. Create Broadcast with custom title
+      const broadcastRes = await youtube.liveBroadcasts.insert({
+        auth: oauth2Client,
+        part: "snippet,status,contentDetails",
+        requestBody: {
+          snippet: {
+            title:
+              title || `Stream via Controller - ${new Date().toLocaleString()}`,
+            scheduledStartTime: new Date().toISOString(),
+          },
+          status: { privacyStatus: "unlisted" },
+        },
+      });
+
+      const broadcastId = broadcastRes.data.id;
+      const liveChatId = broadcastRes.data.snippet.liveChatId;
+
+      // 2. Create Stream and extract Ingestion Info
+      const streamRes = await youtube.liveStreams.insert({
+        auth: oauth2Client,
+        part: "snippet,cdn",
+        requestBody: {
+          snippet: { title: "OBS Stream" },
+          cdn: {
+            ingestionType: "rtmp",
+            resolution: "1080p",
+            frameRate: "60fps",
+          },
+        },
+      });
+
+      const streamId = streamRes.data.id;
+      const streamKey = streamRes.data.cdn.ingestionInfo.streamName;
+      const ingestUrl = streamRes.data.cdn.ingestionInfo.ingestionAddress;
+
+      // 3. Bind Stream to Broadcast
+      await youtube.liveBroadcasts.bind({
+        auth: oauth2Client,
+        part: "id,contentDetails",
+        id: broadcastId,
+        streamId: streamId,
+      });
+
+      // 4. INJECT STREAM KEY INTO OBS
+      if (state.obsConnected) {
+        await obsMain
+          .call("SetStreamServiceSettings", {
+            streamServiceType: "rtmp_custom",
+            streamServiceSettings: {
+              server: ingestUrl,
+              key: streamKey,
+              use_auth: false,
+            },
+          })
+          .catch((err) => console.error("OBS Stream Key Set Error:", err));
+      }
+
+      state.ytVideoId = broadcastId;
+      state.ytLiveChatId = liveChatId;
+      io.emit("state-update", state);
+      startYouTubeChatPolling(liveChatId);
+    } catch (err) {
+      console.error("Failed to start YouTube Stream:", err.message);
+    }
+  });
 });
 
 server.listen(4000, "0.0.0.0", () => {
-  console.log("🚀 Headless Server running on http://localhost:4000");
+  console.log("🚀 Server running on port 4000");
   connectOBS();
 });

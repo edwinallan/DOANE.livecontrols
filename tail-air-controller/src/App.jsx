@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { io } from "socket.io-client"; // FIXED: Destructured import
+import { io } from "socket.io-client";
 import OBSPanel from "./components/OBSPanel";
 import CameraPanel from "./components/CameraPanel";
 
-// FIXED: Dynamically connect to wherever the page was loaded from!
 const backendUrl = `http://${window.location.hostname}:4000`;
 const socket = io(backendUrl);
 
@@ -15,15 +14,17 @@ export default function App() {
     streamBitrate: 0,
     sourcesConnected: { "Tail A": false, "Tail B": false, "Mobile SRT": false },
     autoSwitch: { enabled: false, mobile: false, min: 5, max: 15 },
+    ytAuthenticated: false,
+    ytVideoId: null,
+    ytLiveChatId: null,
   });
 
-  const [obsScreenshot, setObsScreenshot] = useState("");
+  const [obsScreenshots, setObsScreenshots] = useState({});
+  const [ytChatMessages, setYtChatMessages] = useState([]);
   const [selectedCams, setSelectedCams] = useState(["Tail A"]);
   const [zoomLevel, setZoomLevel] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [savingPreset, setSavingPreset] = useState(null);
-
-  // RESTORED: Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
@@ -35,17 +36,27 @@ export default function App() {
       setState((prev) => ({ ...prev, ...newState }));
     });
 
-    socket.on("obs-screenshot", (base64Data) => {
-      setObsScreenshot(base64Data);
+    socket.on("obs-screenshots", (data) => {
+      setObsScreenshots(data);
+    });
+
+    socket.on("yt-chat-update", (newMessages) => {
+      setYtChatMessages((prev) => {
+        const combined = [...prev, ...newMessages];
+        const unique = Array.from(
+          new Map(combined.map((m) => [m.id, m])).values(),
+        );
+        return unique.slice(-50);
+      });
     });
 
     return () => {
       socket.off("state-update");
-      socket.off("obs-screenshot");
+      socket.off("obs-screenshots");
+      socket.off("yt-chat-update");
     };
   }, []);
 
-  // RESTORED: Recording timer logic
   useEffect(() => {
     let interval;
     if (isRecording) {
@@ -68,6 +79,9 @@ export default function App() {
   const handleToggleStream = () => socket.emit("toggle-stream");
   const updateAutoSwitch = (newConfig) =>
     socket.emit("update-autoswitch", newConfig);
+
+  // UPDATED: Now accepts a title
+  const handleStartYTStream = (title) => socket.emit("start-yt-stream", title);
 
   const sendOSC = (address, value) => {
     if (selectedCams.length > 0) {
@@ -102,15 +116,19 @@ export default function App() {
   };
 
   return (
-    <div className="flex w-full h-screen overflow-hidden gap-4 p-4 bg-zinc-950 text-white select-none">
+    <div className="flex w-full h-screen overflow-hidden bg-zinc-950 text-white select-none p-4 gap-4">
       <OBSPanel
         state={state}
-        obsScreenshot={obsScreenshot}
+        obsScreenshots={obsScreenshots}
         handleSceneChange={handleSceneChange}
         updateAutoSwitch={updateAutoSwitch}
         handleToggleStream={handleToggleStream}
       />
       <CameraPanel
+        state={state}
+        ytChatMessages={ytChatMessages}
+        handleStartYTStream={handleStartYTStream}
+        backendUrl={backendUrl}
         selectedCams={selectedCams}
         setSelectedCams={setSelectedCams}
         sendOSC={sendOSC}
