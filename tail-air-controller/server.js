@@ -16,6 +16,7 @@ const io = new SocketIOServer(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
+// Serve the built React app (when running in production)
 app.use(express.static(path.join(__dirname, "dist")));
 
 // --- STATE ---
@@ -32,63 +33,6 @@ let state = {
   ytLiveChatId: null,
 };
 
-// --- YOUTUBE API SETUP ---
-const youtube = google.youtube("v3");
-const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:4000";
-const oauth2Client = new google.auth.OAuth2(
-  process.env.YT_CLIENT_ID,
-  process.env.YT_CLIENT_SECRET,
-  `${BACKEND_URL}/oauth2callback`,
-);
-
-app.get("/auth/youtube", (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: [
-      "https://www.googleapis.com/auth/youtube",
-      "https://www.googleapis.com/auth/youtube.force-ssl",
-    ],
-  });
-  res.redirect(url);
-});
-
-app.get("/oauth2callback", async (req, res) => {
-  try {
-    const { tokens } = await oauth2Client.getToken(req.query.code);
-    oauth2Client.setCredentials(tokens);
-    state.ytAuthenticated = true;
-    io.emit("state-update", state);
-    res.send(
-      "<h2>Successfully Authenticated with YouTube!</h2><p>You can close this window and return to the panel.</p>",
-    );
-  } catch (err) {
-    res.status(500).send("Authentication failed.");
-  }
-});
-
-let chatPollInterval;
-let nextChatPageToken = "";
-
-async function startYouTubeChatPolling(liveChatId) {
-  clearInterval(chatPollInterval);
-  chatPollInterval = setInterval(async () => {
-    try {
-      const res = await youtube.liveChatMessages.list({
-        auth: oauth2Client,
-        liveChatId: liveChatId,
-        part: "snippet,authorDetails",
-        pageToken: nextChatPageToken || undefined,
-      });
-      nextChatPageToken = res.data.nextPageToken;
-      if (res.data.items && res.data.items.length > 0) {
-        io.emit("yt-chat-update", res.data.items);
-      }
-    } catch (e) {
-      console.error("YouTube Chat Poll Error:", e.message);
-    }
-  }, 5000); // Poll every 5 seconds per YouTube API limits
-}
-
 // --- OSC & DB SETUP ---
 let oscClients = {};
 let camIPs = { "Tail A": null, "Tail B": null };
@@ -96,14 +40,22 @@ let pendingPresetSaves = {};
 
 const dbPath = path.join(__dirname, "presets.db");
 const db = new sqlite3.Database(dbPath);
-db.run(
-  "CREATE TABLE IF NOT EXISTS presets (cam TEXT, presetId INTEGER, pan REAL, tilt REAL, zoom REAL, PRIMARY KEY(cam, presetId))",
-);
+
+// Initialize Tables (File is auto-created if missing)
+db.serialize(() => {
+  db.run(
+    "CREATE TABLE IF NOT EXISTS presets (cam TEXT, presetId INTEGER, pan REAL, tilt REAL, zoom REAL, PRIMARY KEY(cam, presetId))",
+  );
+  db.run(
+    "CREATE TABLE IF NOT EXISTS auth_tokens (id INTEGER PRIMARY KEY CHECK (id = 1), tokens TEXT)",
+  );
+});
 
 const oscServer = new OSCServer(57120, "0.0.0.0", () => {
   console.log("OSC Server listening on port 57120");
 });
 
+// OSC Preset Save Listener
 oscServer.on("message", (msg, rinfo) => {
   const address = msg[0];
   const args = msg.slice(1);
@@ -138,6 +90,107 @@ function sendOSC(camera, address, ...args) {
       if (err) console.error(`OSC Error (${camera}):`, err);
     });
   }
+}
+
+// --- YOUTUBE API SETUP ---
+const youtube = google.youtube("v3");
+const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:4000";
+const oauth2Client = new google.auth.OAuth2(
+  process.env.YT_CLIENT_ID,
+  process.env.YT_CLIENT_SECRET,
+  `${BACKEND_URL}/oauth2callback`,
+);
+
+// 1. Load Tokens on Server Boot
+db.get("SELECT tokens FROM auth_tokens WHERE id = 1", (err, row) => {
+  if (row && row.tokens) {
+    try {
+      const tokens = JSON.parse(row.tokens);
+      oauth2Client.setCredentials(tokens);
+      state.ytAuthenticated = true;
+      console.log("✅ YouTube OAuth tokens loaded from database.");
+    } catch (e) {
+      console.error("Failed to parse stored tokens:", e);
+    }
+  }
+});
+
+// 2. Auto-save refreshed tokens to the database
+oauth2Client.on("tokens", (tokens) => {
+  if (!tokens.refresh_token) {
+    const currentCreds = oauth2Client.credentials;
+    tokens.refresh_token = currentCreds.refresh_token;
+  }
+
+  db.run(
+    "INSERT OR REPLACE INTO auth_tokens (id, tokens) VALUES (1, ?)",
+    [JSON.stringify(tokens)],
+    (err) => {
+      if (!err)
+        console.log(
+          "🔄 YouTube OAuth tokens automatically refreshed and saved.",
+        );
+    },
+  );
+});
+
+app.get("/auth/youtube", (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    prompt: "consent",
+    scope: [
+      "https://www.googleapis.com/auth/youtube",
+      "https://www.googleapis.com/auth/youtube.force-ssl",
+    ],
+  });
+  res.redirect(url);
+});
+
+app.get("/oauth2callback", async (req, res) => {
+  try {
+    const { tokens } = await oauth2Client.getToken(req.query.code);
+    oauth2Client.setCredentials(tokens);
+
+    db.run(
+      "INSERT OR REPLACE INTO auth_tokens (id, tokens) VALUES (1, ?)",
+      [JSON.stringify(tokens)],
+      (err) => {
+        if (err) console.error("Failed to save initial tokens:", err);
+      },
+    );
+
+    state.ytAuthenticated = true;
+    io.emit("state-update", state);
+    res.send(
+      "<h2>Successfully Authenticated with YouTube!</h2><p>You can close this window and return to the panel.</p>",
+    );
+  } catch (err) {
+    console.error("OAuth Callback Error:", err);
+    res.status(500).send("Authentication failed.");
+  }
+});
+
+let chatPollInterval;
+let nextChatPageToken = "";
+
+async function startYouTubeChatPolling(liveChatId) {
+  clearInterval(chatPollInterval);
+  chatPollInterval = setInterval(async () => {
+    try {
+      const res = await youtube.liveChatMessages.list({
+        auth: oauth2Client,
+        liveChatId: liveChatId,
+        part: "snippet,authorDetails",
+        pageToken: nextChatPageToken || undefined,
+      });
+      nextChatPageToken = res.data.nextPageToken;
+      if (res.data.items && res.data.items.length > 0) {
+        io.emit("yt-chat-update", res.data.items);
+      }
+    } catch (e) {
+      console.error("YouTube Chat Poll Error:", e.message);
+    }
+  }, 5000);
 }
 
 // --- TCP HEARTBEAT ---
@@ -182,6 +235,7 @@ let autoSwitchTimer;
 async function connectOBS() {
   try {
     const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
+
     await obsMain.connect("ws://127.0.0.1:4455", obsPassword);
     await obsAudio.connect("ws://127.0.0.1:4455", obsPassword, {
       eventSubscriptions: 65536,
@@ -217,6 +271,7 @@ async function fetchCameraIPs() {
         camIPs[cam] = match[0];
         if (oscClients[cam]) oscClients[cam].close();
         oscClients[cam] = new Client(match[0], 57110);
+
         sendOSC(cam, "/OBSBOT/WebCam/General/SetZoomMin", 1);
         sendOSC(cam, "/OBSBOT/WebCam/General/ResetGimbal", 1);
       }
@@ -256,6 +311,7 @@ obsAudio.on("InputVolumeMeters", (data) => {
 });
 
 let isFetchingScreenshot = false;
+
 setInterval(async () => {
   if (
     !state.obsConnected ||
@@ -264,9 +320,11 @@ setInterval(async () => {
   )
     return;
   isFetchingScreenshot = true;
+
   try {
     const scenesToFetch = ["CAM 1", "CAM 2", "Mobile"];
     let screenshots = {};
+
     for (const scene of scenesToFetch) {
       const res = await obsMain
         .call("GetSourceScreenshot", {
@@ -277,17 +335,23 @@ setInterval(async () => {
           imageCompressionQuality: 50,
         })
         .catch(() => null);
-      if (res && res.imageData) screenshots[scene] = res.imageData;
+
+      if (res && res.imageData) {
+        screenshots[scene] = res.imageData;
+      }
     }
+
     io.emit("obs-screenshots", screenshots);
   } finally {
     isFetchingScreenshot = false;
   }
 }, 1000);
 
+// --- AUTO SWITCHER LOGIC ---
 function scheduleNextSwitch() {
   clearTimeout(autoSwitchTimer);
   if (!state.autoSwitch.enabled) return;
+
   const delay =
     Math.floor(
       Math.random() * (state.autoSwitch.max - state.autoSwitch.min + 1) +
@@ -317,7 +381,9 @@ function scheduleNextSwitch() {
   }, delay);
 }
 
+// --- SOCKET.IO CLIENT HANDLERS ---
 io.on("connection", (socket) => {
+  console.log("Client connected");
   socket.emit("state-update", state);
 
   socket.on("set-scene", async (sceneName) => {
@@ -378,14 +444,16 @@ io.on("connection", (socket) => {
   socket.on("start-yt-stream", async (title) => {
     if (!state.ytAuthenticated) return;
     try {
+      const actualTitle =
+        title || `Stream via Controller - ${new Date().toLocaleString()}`;
+
       // 1. Create Broadcast with custom title
       const broadcastRes = await youtube.liveBroadcasts.insert({
         auth: oauth2Client,
         part: "snippet,status,contentDetails",
         requestBody: {
           snippet: {
-            title:
-              title || `Stream via Controller - ${new Date().toLocaleString()}`,
+            title: actualTitle,
             scheduledStartTime: new Date().toISOString(),
           },
           status: { privacyStatus: "unlisted" },
@@ -395,23 +463,46 @@ io.on("connection", (socket) => {
       const broadcastId = broadcastRes.data.id;
       const liveChatId = broadcastRes.data.snippet.liveChatId;
 
-      // 2. Create Stream and extract Ingestion Info
-      const streamRes = await youtube.liveStreams.insert({
+      // 2. Find or Create "DOANE.live" reusable Stream Key
+      let streamId;
+      let streamKey;
+      let ingestUrl;
+
+      // Fetch existing streams for this account
+      const streamsRes = await youtube.liveStreams.list({
         auth: oauth2Client,
         part: "snippet,cdn",
-        requestBody: {
-          snippet: { title: "OBS Stream" },
-          cdn: {
-            ingestionType: "rtmp",
-            resolution: "1080p",
-            frameRate: "60fps",
-          },
-        },
+        mine: true,
       });
 
-      const streamId = streamRes.data.id;
-      const streamKey = streamRes.data.cdn.ingestionInfo.streamName;
-      const ingestUrl = streamRes.data.cdn.ingestionInfo.ingestionAddress;
+      // Look for our specific reusable key
+      const existingStream = streamsRes.data.items?.find(
+        (s) => s.snippet.title === "DOANE.live",
+      );
+
+      if (existingStream) {
+        streamId = existingStream.id;
+        streamKey = existingStream.cdn.ingestionInfo.streamName;
+        ingestUrl = existingStream.cdn.ingestionInfo.ingestionAddress;
+        console.log("♻️ Reusing existing DOANE.live stream key.");
+      } else {
+        const newStreamRes = await youtube.liveStreams.insert({
+          auth: oauth2Client,
+          part: "snippet,cdn",
+          requestBody: {
+            snippet: { title: "DOANE.live" },
+            cdn: {
+              ingestionType: "rtmp",
+              resolution: "1080p",
+              frameRate: "60fps",
+            },
+          },
+        });
+        streamId = newStreamRes.data.id;
+        streamKey = newStreamRes.data.cdn.ingestionInfo.streamName;
+        ingestUrl = newStreamRes.data.cdn.ingestionInfo.ingestionAddress;
+        console.log("✨ Created new DOANE.live stream key.");
+      }
 
       // 3. Bind Stream to Broadcast
       await youtube.liveBroadcasts.bind({
@@ -437,6 +528,7 @@ io.on("connection", (socket) => {
 
       state.ytVideoId = broadcastId;
       state.ytLiveChatId = liveChatId;
+      state.ytStreamTitle = actualTitle; // Update title in state for the UI
       io.emit("state-update", state);
       startYouTubeChatPolling(liveChatId);
     } catch (err) {

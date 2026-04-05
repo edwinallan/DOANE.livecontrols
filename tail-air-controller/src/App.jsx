@@ -17,6 +17,7 @@ export default function App() {
     ytAuthenticated: false,
     ytVideoId: null,
     ytLiveChatId: null,
+    ytStreamTitle: "", // <-- Added this
   });
 
   const [obsScreenshots, setObsScreenshots] = useState({});
@@ -79,8 +80,6 @@ export default function App() {
   const handleToggleStream = () => socket.emit("toggle-stream");
   const updateAutoSwitch = (newConfig) =>
     socket.emit("update-autoswitch", newConfig);
-
-  // UPDATED: Now accepts a title
   const handleStartYTStream = (title) => socket.emit("start-yt-stream", title);
 
   const sendOSC = (address, value) => {

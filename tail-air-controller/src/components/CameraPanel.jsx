@@ -23,6 +23,7 @@ import {
   Lightbulb,
   PlaySquare,
   Youtube,
+  ExternalLink,
 } from "lucide-react";
 
 export default function CameraPanel({
@@ -346,10 +347,26 @@ export default function CameraPanel({
                 </button>
               </div>
             ) : (
-              <span className="text-xs bg-green-600/20 text-green-400 px-2 py-1 rounded-md font-bold border border-green-500/20 flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>{" "}
-                LIVE
-              </span>
+              <div className="flex items-center gap-3">
+                <span
+                  className="text-xs font-bold text-zinc-300 max-w-[120px] truncate"
+                  title={state.ytStreamTitle}
+                >
+                  {state.ytStreamTitle}
+                </span>
+                <a
+                  href={`https://youtu.be/${state.ytVideoId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1.5 rounded-md font-bold hover:bg-zinc-700 flex items-center gap-1.5 transition-all"
+                >
+                  <ExternalLink size={14} /> APP
+                </a>
+                <span className="text-xs bg-green-600/20 text-green-400 px-2 py-1.5 rounded-md font-bold border border-green-500/20 flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>{" "}
+                  LIVE
+                </span>
+              </div>
             )}
           </div>
 
