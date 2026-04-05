@@ -111,4 +111,4 @@ _(Note: "x" below denotes variables reserved for future use, where `0` is recomm
 | `/OBSBOT/WebCam/General/GetZoomInfo`          | `i`           | `x`         | Requests zoom info; triggers "ZoomInfo" response.                                                     |
 | `/OBSBOT/WebCam/General/ZoomInfo`             | `ii`          | Reply       | Returns zoom value (0-100) and FOV value (0=86°, 1=78°, 2=65°).                                       |
 | `/OBSBOT/WebCam/General/GetGimbalPosInfo`     | `i`           | `x`         | Requests motor degrees; triggers "GetGimbalPosInfoResp".                                              |
-| `/OBSBOT/WebCam/General/GetGimbalPosInfoResp` | `iii`         | Reply       | Returns roll, pitch (-90°~90°), and yaw (-140°~140°).                                                 |
+| `/OBSBOT/WebCam/General/GetGimbalPosInfoResp` | `iii`         | Reply       | Returns roll, pitch (-90°\~90°), and yaw (-140°\~140°).                                               |
