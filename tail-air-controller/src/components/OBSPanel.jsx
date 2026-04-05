@@ -1,9 +1,6 @@
 import React from "react";
 import { ChevronUp, ChevronDown, Radio, ImageOff } from "lucide-react";
-
-// Robust SVG Data URI for the offline static effect (No need to host or bundle images)
-const staticGlitch =
-  "data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E";
+import staticGlitch from "../assets/static-glitch.gif"; // Import the local GIF
 
 export default function OBSPanel({
   state,
@@ -22,17 +19,21 @@ export default function OBSPanel({
 
   const SceneButton = ({ sceneName, displayName, sourceKey, spanCol }) => {
     const isOnline = sourcesConnected[sourceKey];
+
+    // Fallback to the local GIF if the camera is offline or has no screenshot
     const bgImage =
       isOnline && obsScreenshots[sceneName]
         ? obsScreenshots[sceneName]
         : staticGlitch;
+
     const isActive = activeScene === sceneName;
 
     return (
       <button
         onClick={() => isOnline && handleSceneChange(sceneName)}
         disabled={!isOnline}
-        className={`relative w-full aspect-video bg-zinc-800 rounded-xl overflow-hidden border-2 transition-all group shrink-0 ${
+        // Removed `aspect-video`, added `block h-0 pb-[56.25%]` for iOS 12 support (16:9 ratio hack)
+        className={`relative w-full block h-0 pb-[56.25%] bg-zinc-800 rounded-xl overflow-hidden border-2 transition-all group shrink-0 ${
           spanCol ? "col-span-2" : "col-span-1"
         } ${isActive ? "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)]" : "border-zinc-700 hover:border-zinc-500"} ${
           !isOnline ? "opacity-50 grayscale cursor-not-allowed" : ""
