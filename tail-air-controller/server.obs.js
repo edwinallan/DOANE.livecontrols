@@ -1,5 +1,6 @@
 const { default: OBSWebSocket } = require("obs-websocket-js");
 const { updateCameraIP } = require("./server.osc");
+const net = require("net"); // <-- NEW: Native network module
 
 const obsMain = new OBSWebSocket();
 const obsAudio = new OBSWebSocket();
@@ -8,6 +9,14 @@ let globalIo;
 let mobileAudioTimeout;
 let autoSwitchTimer;
 let isFetchingScreenshot = false;
+
+// --- DYNAMIC LOOP STATE ---
+const lastMoveTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
+const lastFetchTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
+const currentScreenshots = {};
+
+// --- NEW: Local IP cache for pinging ---
+const localCameraIPs = { "Tail A": null, "Tail B": null };
 
 async function setOBSStreamKey(url, key) {
   if (globalState && globalState.obsConnected) {
@@ -28,7 +37,11 @@ async function fetchCameraIPs() {
         inputName: cam,
       });
       const match = JSON.stringify(inputSettings).match(ipv4Regex);
-      if (match) updateCameraIP(cam, match[0]);
+      if (match) {
+        const ip = match[0];
+        updateCameraIP(cam, ip); // Sends to server.osc.js
+        localCameraIPs[cam] = ip; // Saves locally for our ping loop
+      }
     } catch (e) {}
   }
 }
@@ -132,36 +145,128 @@ function initOBS(io, state) {
     }
   });
 
+  // --- NEW: Bulletproof TCP Ping Loop ---
   setInterval(async () => {
+    let stateChanged = false;
+
+    for (const cam of ["Tail A", "Tail B"]) {
+      const ip = localCameraIPs[cam];
+      if (!ip) continue;
+
+      // Try to establish a pure TCP connection to the camera's OSC port
+      const isOnline = await new Promise((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(1000); // 1 second timeout
+
+        socket.on("connect", () => {
+          socket.destroy();
+          resolve(true); // Network connection succeeded!
+        });
+
+        socket.on("timeout", () => {
+          socket.destroy();
+          resolve(false); // Dead
+        });
+
+        socket.on("error", () => {
+          socket.destroy();
+          resolve(false); // Refused or unreachable
+        });
+
+        socket.connect(57110, ip);
+      });
+
+      // If the real network state differs from our app state, update it
+      if (state.sourcesConnected[cam] !== isOnline) {
+        state.sourcesConnected[cam] = isOnline;
+        stateChanged = true;
+      }
+    }
+
+    if (stateChanged) {
+      io.emit("state-update", state);
+    }
+  }, 2000); // Checks every 2 seconds
+
+  // --- Smart Dynamic Screenshot Loop ---
+  async function screenshotLoop() {
     if (
       !state.obsConnected ||
       isFetchingScreenshot ||
       io.engine.clientsCount === 0
-    )
+    ) {
+      setTimeout(screenshotLoop, 100);
       return;
+    }
+
     isFetchingScreenshot = true;
     try {
+      const now = Date.now();
       const scenesToFetch = ["CAM 1", "CAM 2", "Mobile"];
-      let screenshots = {};
+      let hasUpdates = false;
+
       for (const scene of scenesToFetch) {
-        const res = await obsMain
-          .call("GetSourceScreenshot", {
-            sourceName: scene,
-            imageFormat: "jpeg",
-            imageWidth: 480,
-            imageHeight: 270,
-            imageCompressionQuality: 50,
-          })
-          .catch(() => null);
-        if (res && res.imageData) screenshots[scene] = res.imageData;
+        const isMoving = now - lastMoveTime[scene] < 1500;
+        const timeSinceLastFetch = now - lastFetchTime[scene];
+        const intervalTarget = isMoving ? 66 : 1000;
+
+        if (timeSinceLastFetch >= intervalTarget) {
+          lastFetchTime[scene] = now;
+
+          const res = await obsMain
+            .call("GetSourceScreenshot", {
+              sourceName: scene,
+              imageFormat: "jpeg",
+              imageWidth: 480,
+              imageHeight: 270,
+              imageCompressionQuality: isMoving ? 25 : 50,
+            })
+            .catch(() => null);
+
+          if (res && res.imageData) {
+            currentScreenshots[scene] = res.imageData;
+            hasUpdates = true;
+          } else if (currentScreenshots[scene]) {
+            delete currentScreenshots[scene];
+            hasUpdates = true;
+          }
+        }
       }
-      io.emit("obs-screenshots", screenshots);
+
+      if (hasUpdates) {
+        io.emit("obs-screenshots", currentScreenshots);
+      }
     } finally {
       isFetchingScreenshot = false;
+      setTimeout(screenshotLoop, 20);
     }
-  }, 1000);
+  }
+
+  screenshotLoop();
 
   io.on("connection", (socket) => {
+    socket.on("send-osc", ({ targets, address }) => {
+      const isMovement =
+        address.includes("SetGimbal") ||
+        address.includes("SetZoom") ||
+        address.includes("ResetGimbal");
+      if (isMovement) {
+        targets.forEach((cam) => {
+          const scene =
+            cam === "Tail A" ? "CAM 1" : cam === "Tail B" ? "CAM 2" : null;
+          if (scene) lastMoveTime[scene] = Date.now();
+        });
+      }
+    });
+
+    socket.on("load-preset", ({ targets }) => {
+      targets.forEach((cam) => {
+        const scene =
+          cam === "Tail A" ? "CAM 1" : cam === "Tail B" ? "CAM 2" : null;
+        if (scene) lastMoveTime[scene] = Date.now() + 1000;
+      });
+    });
+
     socket.on("set-scene", async (sceneName) => {
       if (state.obsConnected)
         await obsMain
