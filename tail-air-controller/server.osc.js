@@ -1,5 +1,5 @@
 const osc = require("osc");
-const db = require("./db");
+const db = require("./server.db");
 
 let udpPort;
 const cameraIPs = { "Tail A": null, "Tail B": null };

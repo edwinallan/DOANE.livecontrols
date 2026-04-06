@@ -1,6 +1,6 @@
 const { google } = require("googleapis");
 const db = require("./db");
-const { setOBSStreamKey } = require("./obs");
+const { setOBSStreamKey } = require("./server.obs");
 
 const youtube = google.youtube("v3");
 let chatPollInterval;

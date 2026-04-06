@@ -1,5 +1,5 @@
 const { default: OBSWebSocket } = require("obs-websocket-js");
-const { updateCameraIP } = require("./osc");
+const { updateCameraIP } = require("./server.osc");
 
 const obsMain = new OBSWebSocket();
 const obsAudio = new OBSWebSocket();
