@@ -31,8 +31,11 @@ Installation and execution are handled automatically via the included Mac execut
 ### Backend / Server
 
 - **`server.js`**: The main entry point for the backend. It initializes the Express server, sets up Socket.io for real-time frontend-backend communication, serves the built Vite frontend, and initializes the application's core modules.
-- **`store.js`**: Holds the shared, global state object for the backend so that the OBS, OSC, and YouTube modules stay perfectly synchronized.
-- **`youtube.js`**: Manages the YouTube API integration. Handles OAuth2 authentication (storing tokens locally), creates unlisted live broadcasts, binds them to video streams, and polls for live chat messages and stream health.
+- **`server.db.js`**: Handles local SQLite database operations, such as storing persistent YouTube OAuth2 tokens and saving camera PTZ presets.
+- **`server.obs.js`**: Manages the OBS Studio integration via OBS WebSocket, handling scene switching, stream toggling, and capturing live screenshots.
+- **`server.osc.js`**: Manages Open Sound Control (OSC) UDP communication with the OBSBOT cameras, sending commands for movement, zoom, and AI tracking, as well as receiving position data.
+- **`server.store.js`**: Holds the shared, global state object for the backend so that the OBS, OSC, and YouTube modules stay perfectly synchronized and emit accurate states to connected clients.
+- **`server.youtube.js`**: Manages the YouTube API integration. Handles OAuth2 authentication, creates unlisted live broadcasts, binds them to video streams, and polls for live chat messages and stream health.
 
 ### Frontend / React (Vite)
 
@@ -68,7 +71,7 @@ _(Note: "x" below denotes variables reserved for future use, where `0` is recomm
 | Command Address                            | Type  | Value Range              | Description                                                              |
 | :----------------------------------------- | :---- | :----------------------- | :----------------------------------------------------------------------- |
 | `/OBSBOT/WebCam/General/ResetGimbal`       | `i`   | `x`                      | Resets the gimbal to center.                                             |
-| `/OBSBOT/WebCam/General/SetZoom`           | `i`   | `0-100`                  | 0-100 corresponds to 0%~100% of full zoom range.                         |
+| `/OBSBOT/WebCam/General/SetZoom`           | `i`   | `0-100`                  | 0-100 corresponds to 0%\~100% of full zoom range.                        |
 | `/OBSBOT/WebCam/General/SetZoomSpeed`      | `ii`  | `0-100, 0-11`            | Arg 1: Target zoom (0-100). Arg 2: Speed (0 is default, 1-11 is faster). |
 | `/OBSBOT/WebCam/General/SetZoomMax`        | `i`   | `x`                      | Sets maximum zoom limit.                                                 |
 | `/OBSBOT/WebCam/General/SetZoomMin`        | `i`   | `x`                      | Sets minimum zoom limit.                                                 |

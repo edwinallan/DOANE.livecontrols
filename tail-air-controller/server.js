@@ -5,12 +5,12 @@ const { Server: SocketIOServer } = require("socket.io");
 const path = require("path");
 
 // Import our shared state
-const state = require("./store");
+const state = require("./server.store");
 
 // Import our isolated modules
-const { initOSC } = require("./osc");
-const { initOBS } = require("./obs");
-const { initYouTube } = require("./youtube");
+const { initOSC } = require("./server.osc");
+const { initOBS } = require("./server.obs");
+const { initYouTube } = require("./server.youtube");
 
 // --- SERVER SETUP ---
 const app = express();

@@ -1,5 +1,5 @@
 const { google } = require("googleapis");
-const db = require("./db");
+const db = require("./server.db");
 const { setOBSStreamKey } = require("./server.obs");
 
 const youtube = google.youtube("v3");
