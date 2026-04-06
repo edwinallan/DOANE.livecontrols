@@ -25,6 +25,7 @@ import {
 export default function CameraPanel({
   isExpanded,
   onExpand,
+  sourcesConnected,
   selectedCams,
   setSelectedCams,
   sendOSC,
@@ -55,6 +56,9 @@ export default function CameraPanel({
     );
   }
 
+  const onlineCams = ["Tail A", "Tail B"].filter((c) => sourcesConnected?.[c]);
+  const allOffline = onlineCams.length === 0;
+
   const btnBase =
     "bg-zinc-800 text-zinc-200 rounded-xl font-bold hover:bg-zinc-700 active:bg-zinc-600 active:scale-95 transition-all flex items-center justify-center gap-2 flex-col select-none touch-manipulation";
   const btnActive =
@@ -64,29 +68,58 @@ export default function CameraPanel({
 
   return (
     <div className="flex-1 bg-zinc-900 rounded-3xl p-5 flex flex-col space-y-5 border border-zinc-800 shadow-xl overflow-y-auto min-h-0">
-      <div className="grid grid-cols-2 gap-2 bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800 shrink-0">
-        {["Tail A", "Tail B"].map((cam) => (
-          <button
-            key={cam}
-            onClick={() =>
-              setSelectedCams((prev) =>
-                prev.includes(cam)
-                  ? prev.filter((c) => c !== cam)
-                  : [...prev, cam],
-              )
-            }
-            className={`py-4 text-lg tracking-wide rounded-xl font-black transition-all ${
-              selectedCams.includes(cam)
-                ? btnActive
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            {cam}
+      {/* --- SMART SEGMENTED TAB BAR --- */}
+      <div className="flex bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800 shrink-0">
+        {allOffline ? (
+          <button className="w-full py-4 text-lg tracking-wide rounded-xl font-black text-zinc-700 bg-zinc-950 cursor-not-allowed">
+            Offline
           </button>
-        ))}
+        ) : onlineCams.length === 1 ? (
+          <button
+            className={`w-full py-4 text-lg tracking-wide rounded-xl font-black ${btnActive} cursor-default`}
+          >
+            {onlineCams[0]}
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={() => setSelectedCams(["Tail A"])}
+              className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
+                selectedCams.length === 1 && selectedCams[0] === "Tail A"
+                  ? btnActive
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+              }`}
+            >
+              Tail A
+            </button>
+            <button
+              onClick={() => setSelectedCams(["Tail A", "Tail B"])}
+              className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
+                selectedCams.length === 2
+                  ? btnActive
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+              }`}
+            >
+              Tail A & B
+            </button>
+            <button
+              onClick={() => setSelectedCams(["Tail B"])}
+              className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
+                selectedCams.length === 1 && selectedCams[0] === "Tail B"
+                  ? btnActive
+                  : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900"
+              }`}
+            >
+              Tail B
+            </button>
+          </>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 gap-5 flex-1 min-h-0">
+      {/* Control Grid - Locks down and fades if all cameras are offline */}
+      <div
+        className={`grid grid-cols-2 gap-5 flex-1 min-h-0 transition-opacity duration-300 ${allOffline ? "opacity-30 pointer-events-none" : ""}`}
+      >
         {/* COL 1: AI TRACKING & COLOR */}
         <div className="flex flex-col space-y-5 min-h-0">
           <div className={`flex flex-col gap-4 ${panelInner} flex-1`}>
@@ -94,7 +127,6 @@ export default function CameraPanel({
               AI Tracking
             </div>
 
-            {/* AI Speeds & OFF: 4-column grid */}
             <div className="grid grid-cols-4 gap-2 shrink-0">
               <button
                 onClick={() => sendOSC("/OBSBOT/Camera/TailAir/SetAiMode", 0)}
@@ -226,7 +258,6 @@ export default function CameraPanel({
             <div className="flex flex-col items-center justify-center space-y-4 flex-1 min-h-0 py-2">
               <div className="grid grid-cols-3 grid-rows-3 gap-2 w-48 h-48 shrink-0">
                 <div />
-                {/* UP */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 50)
@@ -248,7 +279,6 @@ export default function CameraPanel({
                   <MoveUp size={32} />
                 </button>
                 <div />
-                {/* LEFT */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 50)
@@ -269,7 +299,6 @@ export default function CameraPanel({
                 >
                   <MoveLeft size={32} />
                 </button>
-                {/* CENTER / RESET */}
                 <button
                   onClick={() =>
                     sendOSC("/OBSBOT/WebCam/General/ResetGimbal", 1)
@@ -278,7 +307,6 @@ export default function CameraPanel({
                 >
                   <Target size={28} />
                 </button>
-                {/* RIGHT */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 50)
@@ -300,7 +328,6 @@ export default function CameraPanel({
                   <MoveRight size={32} />
                 </button>
                 <div />
-                {/* DOWN */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 50)

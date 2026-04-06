@@ -32,8 +32,8 @@ Installation and execution are handled automatically via the included Mac execut
 
 - **`server.js`**: The main entry point for the backend. It initializes the Express server, sets up Socket.io for real-time frontend-backend communication, serves the built Vite frontend, and initializes the application's core modules.
 - **`server.db.js`**: Handles local SQLite database operations, such as storing persistent YouTube OAuth2 tokens and saving camera PTZ presets.
-- **`server.obs.js`**: Manages the OBS Studio integration via OBS WebSocket, handling scene switching, stream toggling, and capturing live screenshots.
-- **`server.osc.js`**: Manages Open Sound Control (OSC) UDP communication with the OBSBOT cameras, sending commands for movement, zoom, and AI tracking, as well as receiving position data.
+- **`server.obs.js`**: Manages the OBS Studio integration via OBS WebSocket. It handles scene switching, dynamic framerate screenshot polling, and uses bulletproof native TCP pinging (port 57110) to reliably track hardware connection states.
+- **`server.osc.js`**: Manages Open Sound Control (OSC) UDP communication with the OBSBOT cameras. It sends commands out on port `57110` and listens for hardware callbacks on port `57120`.
 - **`server.store.js`**: Holds the shared, global state object for the backend so that the OBS, OSC, and YouTube modules stay perfectly synchronized and emit accurate states to connected clients.
 - **`server.youtube.js`**: Manages the YouTube API integration. Handles OAuth2 authentication, creates unlisted live broadcasts, binds them to video streams, and polls for live chat messages and stream health.
 
@@ -49,37 +49,39 @@ Installation and execution are handled automatically via the included Mac execut
 ### React Components
 
 - **`src/components/OBSPanel.jsx`**: UI for monitoring and controlling OBS. Displays live screenshots, indicates source connection status, allows manual scene switching, and controls the Auto-Switch timing logic.
-- **`src/components/CameraPanel.jsx`**: The command center for the OBSBOT cameras. It triggers OSC commands to control AI tracking, color temperature, recording states, PTZ movements, and presets.
+- **`src/components/CameraPanel.jsx`**: The command center for the OBSBOT cameras. It features a smart, context-aware segmented tab bar that dynamically adapts to active cameras. It triggers OSC commands to control AI tracking, color temperature, recording states, PTZ movements, and presets.
 - **`src/components/YouTubePanel.jsx`**: The UI for managing the YouTube stream. Handles the OAuth flow, sets stream titles, transitions streams to "Live," and displays incoming chat messages.
 
 ## 🎮 Complete OBSBOT OSC Command Reference
 
-The Tail Air device supports UDP and TCP by default, using `int32` (i) and `OSC-string` (s) argument types. The server receiving port is `57110`, and the UDP sending port is `57120`. Under TCP, only OSC 1.0 is supported.
+The Tail Air device supports UDP and TCP by default, using `int32` (i) and `OSC-string` (s) argument types.
+
+**Critical Network Routing:** Commands must be sent to the camera's IP on port `57110`. However, the camera fires its responses back via UDP on port `57120`. Your server must be actively listening on `0.0.0.0:57120` to catch replies. Additionally, the camera will ignore data queries (like position requests) unless a `/Connected` handshake has been established first.
 
 _(Note: "x" below denotes variables reserved for future use, where `0` is recommended)_.
 
 ### 1. Connection & General Device Control
 
-| Command Address                        | Type | Value Range | Description                                                    |
-| :------------------------------------- | :--- | :---------- | :------------------------------------------------------------- |
-| `/OBSBOT/WebCam/General/Connected`     | `i`  | `x`         | Used by client to connect; receives "DeviceInfo" upon success. |
-| `/OBSBOT/WebCam/General/ConnectedResp` | `i`  | `1`         | Reply from the server to the client.                           |
-| `/OBSBOT/WebCam/General/Disconnected`  | `i`  | `x`         | Notifies server when a client stops working.                   |
+| Command Address                        | Type | Value Range | Description                                                         |
+| :------------------------------------- | :--- | :---------- | :------------------------------------------------------------------ |
+| `/OBSBOT/WebCam/General/Connected`     | `i`  | `x`         | **Required Handshake.** Must be sent before querying position data. |
+| `/OBSBOT/WebCam/General/ConnectedResp` | `i`  | `1`         | Reply from the server to the client.                                |
+| `/OBSBOT/WebCam/General/Disconnected`  | `i`  | `x`         | Notifies server when a client stops working.                        |
 
 ### 2. PTZ (Pan, Tilt, Zoom) & Gimbal Control
 
-| Command Address                            | Type  | Value Range              | Description                                                              |
-| :----------------------------------------- | :---- | :----------------------- | :----------------------------------------------------------------------- |
-| `/OBSBOT/WebCam/General/ResetGimbal`       | `i`   | `x`                      | Resets the gimbal to center.                                             |
-| `/OBSBOT/WebCam/General/SetZoom`           | `i`   | `0-100`                  | 0-100 corresponds to 0%\~100% of full zoom range.                        |
-| `/OBSBOT/WebCam/General/SetZoomSpeed`      | `ii`  | `0-100, 0-11`            | Arg 1: Target zoom (0-100). Arg 2: Speed (0 is default, 1-11 is faster). |
-| `/OBSBOT/WebCam/General/SetZoomMax`        | `i`   | `x`                      | Sets maximum zoom limit.                                                 |
-| `/OBSBOT/WebCam/General/SetZoomMin`        | `i`   | `x`                      | Sets minimum zoom limit.                                                 |
-| `/OBSBOT/WebCam/General/SetGimbalUp`       | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move up (higher=faster).                               |
-| `/OBSBOT/WebCam/General/SetGimbalDown`     | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move down (higher=faster).                             |
-| `/OBSBOT/WebCam/General/SetGimbalLeft`     | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move left (higher=faster).                             |
-| `/OBSBOT/WebCam/General/SetGimbalRight`    | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move right (higher=faster).                            |
-| `/OBSBOT/WebCam/General/SetGimMotorDegree` | `iii` | `0-90, -129-129, -59-59` | Sets absolute degrees. Arg 1: Speed. Arg 2: Pan. Arg 3: Pitch.           |
+| Command Address                            | Type  | Value Range              | Description                                                                  |
+| :----------------------------------------- | :---- | :----------------------- | :--------------------------------------------------------------------------- |
+| `/OBSBOT/WebCam/General/ResetGimbal`       | `i`   | `x`                      | Resets the gimbal to center.                                                 |
+| `/OBSBOT/WebCam/General/SetZoom`           | `i`   | `0-100`                  | 0-100 corresponds to 0%\~100% of full zoom range.                            |
+| `/OBSBOT/WebCam/General/SetZoomSpeed`      | `ii`  | `0-100, 0-11`            | Arg 1: Target zoom (0-100). Arg 2: Speed (0 is default, 1-11 is faster).     |
+| `/OBSBOT/WebCam/General/SetZoomMax`        | `i`   | `x`                      | Sets maximum zoom limit.                                                     |
+| `/OBSBOT/WebCam/General/SetZoomMin`        | `i`   | `x`                      | Sets minimum zoom limit.                                                     |
+| `/OBSBOT/WebCam/General/SetGimbalUp`       | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move up (higher=faster).                                   |
+| `/OBSBOT/WebCam/General/SetGimbalDown`     | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move down (higher=faster).                                 |
+| `/OBSBOT/WebCam/General/SetGimbalLeft`     | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move left (higher=faster).                                 |
+| `/OBSBOT/WebCam/General/SetGimbalRight`    | `i`   | `0-100`                  | `0`=Stop; `1-100`=Move right (higher=faster).                                |
+| `/OBSBOT/WebCam/General/SetGimMotorDegree` | `iii` | `0-90, -129-129, -59-59` | Sets absolute position. Arg 1: Speed. Arg 2: Pan (Yaw). Arg 3: Tilt (Pitch). |
 
 ### 3. General Image Settings
 
@@ -114,4 +116,4 @@ _(Note: "x" below denotes variables reserved for future use, where `0` is recomm
 | `/OBSBOT/WebCam/General/GetZoomInfo`          | `i`           | `x`         | Requests zoom info; triggers "ZoomInfo" response.                                                     |
 | `/OBSBOT/WebCam/General/ZoomInfo`             | `ii`          | Reply       | Returns zoom value (0-100) and FOV value (0=86°, 1=78°, 2=65°).                                       |
 | `/OBSBOT/WebCam/General/GetGimbalPosInfo`     | `i`           | `x`         | Requests motor degrees; triggers "GetGimbalPosInfoResp".                                              |
-| `/OBSBOT/WebCam/General/GetGimbalPosInfoResp` | `iii`         | Reply       | Returns roll, pitch (-90°\~90°), and yaw (-140°\~140°).                                               |
+| `/OBSBOT/WebCam/General/GetGimbalPosInfoResp` | `ii`          | Reply       | **Corrected:** Returns only pitch (Tilt) and yaw (Pan). The Tail Air omits the 'roll' variable.       |

@@ -37,7 +37,7 @@ export default function App() {
   const [recordingTime, setRecordingTime] = useState(0);
 
   // Accordion UI State
-  const [expandedPanel, setExpandedPanel] = useState("camera"); // "camera" or "youtube"
+  const [expandedPanel, setExpandedPanel] = useState("camera");
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
@@ -67,6 +67,30 @@ export default function App() {
       socket.off("yt-chat-update");
     };
   }, []);
+
+  // --- NEW: Smart Camera Selection Logic ---
+  useEffect(() => {
+    const onlineCams = ["Tail A", "Tail B"].filter(
+      (cam) => state.sourcesConnected[cam],
+    );
+
+    setSelectedCams((prevSelected) => {
+      // 4. All disconnected
+      if (onlineCams.length === 0) return [];
+
+      // 2. Only one camera online (auto-select it, switch if needed)
+      if (onlineCams.length === 1) return [...onlineCams];
+
+      // 1 & 3. Both online. Keep whatever was previously validly selected.
+      const validSelected = prevSelected.filter((cam) =>
+        onlineCams.includes(cam),
+      );
+      if (validSelected.length > 0) return validSelected;
+
+      // Fallback
+      return ["Tail A"];
+    });
+  }, [state.sourcesConnected]);
 
   useEffect(() => {
     let interval;
@@ -136,11 +160,11 @@ export default function App() {
         handleToggleStream={handleToggleStream}
       />
 
-      {/* Accordion Wrapper Container */}
       <div className="flex flex-1 gap-4 min-w-0">
         <CameraPanel
           isExpanded={expandedPanel === "camera"}
           onExpand={() => setExpandedPanel("camera")}
+          sourcesConnected={state.sourcesConnected} // <-- NEW PROP ADDED
           selectedCams={selectedCams}
           setSelectedCams={setSelectedCams}
           sendOSC={sendOSC}
