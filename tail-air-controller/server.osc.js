@@ -2,7 +2,7 @@ const osc = require("osc");
 const db = require("./server.db");
 
 let udpPort;
-const cameraIPs = { "Tail A": null, "Tail B": null };
+const cameraIPs = { "Tail A": "192.168.0.201", "Tail B": "192.168.0.202" };
 const awaitingPresetSave = {}; // Memory queue to track cameras returning info
 
 function initOSC(io, state) {
@@ -50,7 +50,16 @@ function initOSC(io, state) {
         "INSERT OR REPLACE INTO presets (cam, presetId, pan, tilt, zoom) VALUES (?, ?, ?, ?, ?)",
         [cam, req.presetId, req.pan, req.tilt, req.zoom],
         (err) => {
-          if (!err) console.log(`✅ Preset ${req.presetId} saved for ${cam}`);
+          console.log(`\n💾 --- SAVING PRESET ---`);
+          if (!err) {
+            console.log(`✅ Preset P${req.presetId} saved for ${cam}`);
+            console.log(
+              `   Captured Data -> Pan: ${req.pan}, Tilt: ${req.tilt}, Zoom: ${req.zoom}`,
+            );
+          } else {
+            console.error(`❌ DB Save Error:`, err);
+          }
+          console.log(`-------------------------\n`);
           delete awaitingPresetSave[cam];
         },
       );
@@ -58,26 +67,43 @@ function initOSC(io, state) {
   }
 
   io.on("connection", (socket) => {
-    // Standard actions
+    // --- STANDARD ACTIONS (Manual PTZ, AI, Colors, etc.) ---
     socket.on("send-osc", ({ targets, address, value }) => {
       targets.forEach((cam) => {
         const ip = cameraIPs[cam];
         if (ip) {
+          const oscValue = parseInt(value);
+
+          // Log the exact command going out
+          console.log(`\n📡 --- SENDING STANDARD OSC ---`);
+          console.log(`   Target:  ${cam} (${ip})`);
+          console.log(`   Address: ${address}`);
+          console.log(`   Args:    [type: "i", value: ${oscValue}]`);
+          console.log(`-------------------------------\n`);
+
           udpPort.send(
-            { address, args: [{ type: "i", value: parseInt(value) }] },
+            { address, args: [{ type: "i", value: oscValue }] },
             ip,
             57110,
           );
+        } else {
+          console.log(`⚠️ Cannot send OSC: No IP found for ${cam}`);
         }
       });
     });
 
-    // Handle the "Long Press" Action
+    // --- HANDLE "LONG PRESS" (Save Preset) ---
     socket.on("save-preset", ({ targets, presetId }) => {
       targets.forEach((cam) => {
         const ip = cameraIPs[cam];
-        if (!ip) return;
+        if (!ip) {
+          console.log(`⚠️ Cannot save preset: No IP found for ${cam}`);
+          return;
+        }
 
+        console.log(
+          `\n⏳ Requesting coordinates from ${cam} for Preset P${presetId}...`,
+        );
         awaitingPresetSave[cam] = { presetId };
 
         // Ask the camera for its exact position and zoom
@@ -100,7 +126,7 @@ function initOSC(io, state) {
       });
     });
 
-    // Handle the "Quick Tap" Action
+    // --- HANDLE "QUICK TAP" (Load Preset) ---
     socket.on("load-preset", ({ targets, presetId }) => {
       targets.forEach((cam) => {
         const ip = cameraIPs[cam];
@@ -110,15 +136,31 @@ function initOSC(io, state) {
           "SELECT * FROM presets WHERE cam = ? AND presetId = ?",
           [cam, presetId],
           (err, row) => {
-            if (row) {
+            console.log(`\n📤 --- LOADING PRESET ---`);
+            if (err) {
+              console.error(`❌ DB Load Error:`, err);
+            } else if (row) {
+              const speed = 50;
+              const panVal = Math.round(row.pan);
+              const tiltVal = Math.round(row.tilt);
+              const zoomVal = Math.round(row.zoom);
+
+              console.log(`✅ Loaded P${presetId} for ${cam} from DB.`);
+              console.log(
+                `   Sending OSC -> /OBSBOT/WebCam/General/SetGimMotorDegree | Args: [speed:${speed}, pan:${panVal}, tilt:${tiltVal}]`,
+              );
+              console.log(
+                `   Sending OSC -> /OBSBOT/WebCam/General/SetZoom | Args: [zoom:${zoomVal}]`,
+              );
+
               // OBSBOT CSV rules apply: SetGimMotorDegree requires EXACTLY 3 ints (speed, pan, tilt)
               udpPort.send(
                 {
                   address: "/OBSBOT/WebCam/General/SetGimMotorDegree",
                   args: [
-                    { type: "i", value: 50 }, // Movement speed (0-90)
-                    { type: "i", value: Math.round(row.pan) },
-                    { type: "i", value: Math.round(row.tilt) },
+                    { type: "i", value: speed }, // Movement speed (0-90)
+                    { type: "i", value: panVal },
+                    { type: "i", value: tiltVal },
                   ],
                 },
                 ip,
@@ -129,12 +171,17 @@ function initOSC(io, state) {
               udpPort.send(
                 {
                   address: "/OBSBOT/WebCam/General/SetZoom",
-                  args: [{ type: "i", value: Math.round(row.zoom) }],
+                  args: [{ type: "i", value: zoomVal }],
                 },
                 ip,
                 57110,
               );
+            } else {
+              console.log(
+                `⚠️ No preset data found in DB for ${cam} (Preset P${presetId}).`,
+              );
             }
+            console.log(`-------------------------\n`);
           },
         );
       });

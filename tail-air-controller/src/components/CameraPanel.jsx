@@ -226,6 +226,7 @@ export default function CameraPanel({
             <div className="flex flex-col items-center justify-center space-y-4 flex-1 min-h-0 py-2">
               <div className="grid grid-cols-3 grid-rows-3 gap-2 w-48 h-48 shrink-0">
                 <div />
+                {/* UP */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 50)
@@ -233,11 +234,21 @@ export default function CameraPanel({
                   onTouchEnd={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 0)
                   }
+                  onMouseDown={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 50)
+                  }
+                  onMouseUp={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 0)
+                  }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalUp", 0)
+                  }
                   className={`${btnBase} !rounded-lg`}
                 >
                   <MoveUp size={32} />
                 </button>
                 <div />
+                {/* LEFT */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 50)
@@ -245,10 +256,20 @@ export default function CameraPanel({
                   onTouchEnd={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 0)
                   }
+                  onMouseDown={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 50)
+                  }
+                  onMouseUp={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 0)
+                  }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalLeft", 0)
+                  }
                   className={`${btnBase} !rounded-lg`}
                 >
                   <MoveLeft size={32} />
                 </button>
+                {/* CENTER / RESET */}
                 <button
                   onClick={() =>
                     sendOSC("/OBSBOT/WebCam/General/ResetGimbal", 1)
@@ -257,6 +278,7 @@ export default function CameraPanel({
                 >
                   <Target size={28} />
                 </button>
+                {/* RIGHT */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 50)
@@ -264,16 +286,35 @@ export default function CameraPanel({
                   onTouchEnd={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 0)
                   }
+                  onMouseDown={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 50)
+                  }
+                  onMouseUp={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 0)
+                  }
+                  onMouseLeave={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalRight", 0)
+                  }
                   className={`${btnBase} !rounded-lg`}
                 >
                   <MoveRight size={32} />
                 </button>
                 <div />
+                {/* DOWN */}
                 <button
                   onTouchStart={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 50)
                   }
                   onTouchEnd={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 0)
+                  }
+                  onMouseDown={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 50)
+                  }
+                  onMouseUp={() =>
+                    sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 0)
+                  }
+                  onMouseLeave={() =>
                     sendOSC("/OBSBOT/WebCam/General/SetGimbalDown", 0)
                   }
                   className={`${btnBase} !rounded-lg`}
