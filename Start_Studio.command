@@ -73,5 +73,21 @@ else
     echo "✅ OBS Studio is already running."
 fi
 
-echo "🚀 Starting Headless Node Server..."
-node server.js
+echo "🚀 Starting Headless Node Server in the background..."
+
+# Launch Node in the background, detached from this terminal session.
+# Errors and logs will be saved to a new 'server.log' file.
+nohup node server.js > server.log 2>&1 &
+disown
+
+# Give the server a second to boot
+sleep 1
+
+# Smart close: Quit Terminal if it's the only window, otherwise just close this window
+osascript -e 'tell application "Terminal"' \
+          -e 'if (count of windows) is less than or equal to 1 then' \
+          -e 'quit' \
+          -e 'else' \
+          -e 'close front window' \
+          -e 'end if' \
+          -e 'end tell' & exit
