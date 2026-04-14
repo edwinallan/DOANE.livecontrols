@@ -36,19 +36,52 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
-  // Accordion UI State
+  const [camConfigs, setCamConfigs] = useState({});
+  const [modemStats, setModemStats] = useState({
+    battery: 0,
+    charging: false,
+    signal: 0,
+  });
   const [expandedPanel, setExpandedPanel] = useState("camera");
+
+  // NEW: Track the socket connection strictly
+  const [isConnected, setIsConnected] = useState(socket.connected);
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
 
+  // THE FIX: Use a ref to track the currently selected cameras for the socket listener
+  // so we don't trigger infinite render loops by placing state setters inside each other.
+  const selectedCamsRef = useRef(selectedCams);
   useEffect(() => {
+    selectedCamsRef.current = selectedCams;
+  }, [selectedCams]);
+
+  useEffect(() => {
+    const onConnect = () => setIsConnected(true);
+    const onDisconnect = () => setIsConnected(false);
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+
     socket.on("state-update", (newState) => {
       setState((prev) => ({ ...prev, ...newState }));
     });
 
     socket.on("obs-screenshots", (data) => {
       setObsScreenshots(data);
+    });
+
+    socket.on("config-update", (configs) => {
+      setCamConfigs(configs);
+    });
+
+    socket.on("zoom-update", ({ cam, zoom }) => {
+      // THE FIX: Read from the ref instead of the state updater
+      const currentSelected = selectedCamsRef.current;
+      if (currentSelected.length === 1 && currentSelected[0] === cam) {
+        setZoomLevel(zoom);
+      }
     });
 
     socket.on("yt-chat-update", (newMessages) => {
@@ -61,36 +94,58 @@ export default function App() {
       });
     });
 
+    socket.on("modem-update", (data) => {
+      setModemStats(data);
+    });
+
     return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
       socket.off("state-update");
       socket.off("obs-screenshots");
+      socket.off("config-update");
+      socket.off("zoom-update");
       socket.off("yt-chat-update");
+      socket.off("modem-update");
     };
   }, []);
 
-  // --- NEW: Smart Camera Selection Logic ---
+  // THE FIX: Extract exactly what we want to watch so React's strict equality doesn't
+  // infinitely re-fire if the `sourcesConnected` object gets a new memory reference.
+  const tailAOnline = state.sourcesConnected["Tail A"];
+  const tailBOnline = state.sourcesConnected["Tail B"];
+
   useEffect(() => {
-    const onlineCams = ["Tail A", "Tail B"].filter(
-      (cam) => state.sourcesConnected[cam],
-    );
+    const onlineCams = [];
+    if (tailAOnline) onlineCams.push("Tail A");
+    if (tailBOnline) onlineCams.push("Tail B");
 
     setSelectedCams((prevSelected) => {
-      // 4. All disconnected
-      if (onlineCams.length === 0) return [];
+      if (onlineCams.length === 0) {
+        return prevSelected.length === 0 ? prevSelected : [];
+      }
+      if (onlineCams.length === 1) {
+        return prevSelected.length === 1 && prevSelected[0] === onlineCams[0]
+          ? prevSelected
+          : [...onlineCams];
+      }
 
-      // 2. Only one camera online (auto-select it, switch if needed)
-      if (onlineCams.length === 1) return [...onlineCams];
-
-      // 1 & 3. Both online. Keep whatever was previously validly selected.
       const validSelected = prevSelected.filter((cam) =>
         onlineCams.includes(cam),
       );
-      if (validSelected.length > 0) return validSelected;
 
-      // Fallback
+      // Prevent state update if arrays match
+      if (
+        validSelected.length === prevSelected.length &&
+        validSelected.every((val, i) => val === prevSelected[i])
+      ) {
+        return prevSelected;
+      }
+
+      if (validSelected.length > 0) return validSelected;
       return ["Tail A"];
     });
-  }, [state.sourcesConnected]);
+  }, [tailAOnline, tailBOnline]);
 
   useEffect(() => {
     let interval;
@@ -114,7 +169,6 @@ export default function App() {
   const handleToggleStream = () => socket.emit("toggle-stream");
   const updateAutoSwitch = (newConfig) =>
     socket.emit("update-autoswitch", newConfig);
-
   const handleStartYTStream = (title) => socket.emit("start-yt-stream", title);
   const handleGoLiveYT = () => socket.emit("go-live-yt");
 
@@ -158,13 +212,15 @@ export default function App() {
         handleSceneChange={handleSceneChange}
         updateAutoSwitch={updateAutoSwitch}
         handleToggleStream={handleToggleStream}
+        modemStats={modemStats}
+        isConnected={isConnected} // <-- Pass down connection state
       />
 
       <div className="flex flex-1 gap-4 min-w-0">
         <CameraPanel
           isExpanded={expandedPanel === "camera"}
           onExpand={() => setExpandedPanel("camera")}
-          sourcesConnected={state.sourcesConnected} // <-- NEW PROP ADDED
+          sourcesConnected={state.sourcesConnected}
           selectedCams={selectedCams}
           setSelectedCams={setSelectedCams}
           sendOSC={sendOSC}
@@ -180,6 +236,7 @@ export default function App() {
           handlePresetUp={handlePresetUp}
           holdTimerRef={holdTimerRef}
           savingPreset={savingPreset}
+          camConfigs={camConfigs}
         />
 
         <YouTubePanel

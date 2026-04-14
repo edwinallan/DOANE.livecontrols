@@ -1,22 +1,30 @@
 const { default: OBSWebSocket } = require("obs-websocket-js");
 const { updateCameraIP } = require("./server.osc");
-const net = require("net"); // <-- NEW: Native network module
+const net = require("net");
+const db = require("./server.db");
+const { exec } = require("child_process");
 
 const obsMain = new OBSWebSocket();
-const obsAudio = new OBSWebSocket();
 let globalState;
 let globalIo;
-let mobileAudioTimeout;
 let autoSwitchTimer;
 let isFetchingScreenshot = false;
+let wasStreamingBeforeCrash = false;
 
 // --- DYNAMIC LOOP STATE ---
 const lastMoveTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
 const lastFetchTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
 const currentScreenshots = {};
 
-// --- NEW: Local IP cache for pinging ---
+// --- Connection Tracking Caches ---
 const localCameraIPs = { "Tail A": null, "Tail B": null };
+const connectionStrikes = { "Tail A": 0, "Tail B": 0 };
+const MAX_STRIKES = 3;
+
+// NEW: SRT Cursor Tracking
+let lastMobileCursor = -1;
+let mobileStuckStrikes = 0;
+const MAX_MOBILE_STRIKES = 2;
 
 async function setOBSStreamKey(url, key) {
   if (globalState && globalState.obsConnected) {
@@ -39,8 +47,8 @@ async function fetchCameraIPs() {
       const match = JSON.stringify(inputSettings).match(ipv4Regex);
       if (match) {
         const ip = match[0];
-        updateCameraIP(cam, ip); // Sends to server.osc.js
-        localCameraIPs[cam] = ip; // Saves locally for our ping loop
+        updateCameraIP(cam, ip);
+        localCameraIPs[cam] = ip;
       }
     } catch (e) {}
   }
@@ -56,6 +64,7 @@ function scheduleNextSwitch() {
         (globalState.autoSwitch.max - globalState.autoSwitch.min + 1) +
         globalState.autoSwitch.min,
     ) * 1000;
+
   autoSwitchTimer = setTimeout(async () => {
     if (
       globalState.autoSwitch.mobile &&
@@ -86,19 +95,37 @@ function initOBS(io, state) {
   globalIo = io;
   globalState = state;
 
+  // LOAD AUTO-SWITCH SETTINGS FROM DB ON STARTUP
+  db.get("SELECT * FROM auto_switch WHERE id = 1", (err, row) => {
+    if (row) {
+      state.autoSwitch = {
+        enabled: !!row.enabled,
+        mobile: !!row.mobile,
+        min: row.min,
+        max: row.max,
+      };
+      scheduleNextSwitch();
+    }
+  });
+
   async function connectOBS() {
     try {
       const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
       await obsMain.connect("ws://127.0.0.1:4455", obsPassword);
-      await obsAudio.connect("ws://127.0.0.1:4455", obsPassword, {
-        eventSubscriptions: 65536,
-      });
 
       state.obsConnected = true;
       const { currentProgramSceneName } = await obsMain.call(
         "GetCurrentProgramScene",
       );
       state.activeScene = currentProgramSceneName;
+
+      // --- NEW: RESUME STREAMING AFTER CRASH ---
+      if (wasStreamingBeforeCrash) {
+        console.log("🔄 Recovering stream state: Restarting Stream...");
+        await obsMain.call("StartStream").catch(() => {});
+        wasStreamingBeforeCrash = false; // Reset the flag once handled
+      }
+
       const streamStatus = await obsMain.call("GetStreamStatus");
       state.isStreaming = streamStatus.outputActive;
       io.emit("state-update", state);
@@ -108,6 +135,12 @@ function initOBS(io, state) {
     } catch (err) {
       state.obsConnected = false;
       io.emit("state-update", state);
+
+      // --- NEW: FORCE OBS TO OPEN ON FAILURE ---
+      // If the connection fails, it likely means OBS is fully closed.
+      // Using 'open -a' on macOS is safe to spam; if it's already open it just brings it to the front.
+      exec('open -a "OBS"');
+
       setTimeout(connectOBS, 5000);
     }
   }
@@ -115,7 +148,13 @@ function initOBS(io, state) {
   connectOBS();
 
   obsMain.on("ConnectionClosed", () => {
+    console.log("⚠️ OBS Connection Closed or Crashed.");
     state.obsConnected = false;
+
+    // --- NEW: SAVE STREAM STATE & RELAUNCH ---
+    wasStreamingBeforeCrash = state.isStreaming;
+    exec('open -a "OBS"');
+
     io.emit("state-update", state);
     setTimeout(connectOBS, 3000);
   });
@@ -130,63 +169,137 @@ function initOBS(io, state) {
     io.emit("state-update", state);
   });
 
-  obsAudio.on("InputVolumeMeters", (data) => {
-    const mobileInput = data.inputs.find((i) => i.inputName === "Mobile SRT");
-    if (mobileInput && mobileInput.inputLevelsMul.some((l) => l[1] > 0.0001)) {
-      if (!state.sourcesConnected["Mobile SRT"]) {
-        state.sourcesConnected["Mobile SRT"] = true;
-        io.emit("state-update", state);
-      }
-      clearTimeout(mobileAudioTimeout);
-      mobileAudioTimeout = setTimeout(() => {
-        state.sourcesConnected["Mobile SRT"] = false;
-        io.emit("state-update", state);
-      }, 2000);
-    }
-  });
-
-  // --- NEW: Bulletproof TCP Ping Loop ---
+  // --- Unified Hardware & Media Tracking Loop ---
   setInterval(async () => {
+    if (!state.obsConnected) return;
     let stateChanged = false;
 
+    // 1. Check OBSBOT Cameras via TCP Ping
     for (const cam of ["Tail A", "Tail B"]) {
       const ip = localCameraIPs[cam];
       if (!ip) continue;
 
-      // Try to establish a pure TCP connection to the camera's OSC port
       const isOnline = await new Promise((resolve) => {
         const socket = new net.Socket();
-        socket.setTimeout(1000); // 1 second timeout
+        socket.setTimeout(2000);
+
+        const cleanup = () => {
+          socket.removeAllListeners();
+          socket.destroy();
+        };
 
         socket.on("connect", () => {
-          socket.destroy();
-          resolve(true); // Network connection succeeded!
+          cleanup();
+          resolve(true);
         });
 
         socket.on("timeout", () => {
-          socket.destroy();
-          resolve(false); // Dead
+          cleanup();
+          resolve(false);
         });
 
         socket.on("error", () => {
-          socket.destroy();
-          resolve(false); // Refused or unreachable
+          cleanup();
+          resolve(false);
         });
 
         socket.connect(57110, ip);
       });
 
-      // If the real network state differs from our app state, update it
-      if (state.sourcesConnected[cam] !== isOnline) {
-        state.sourcesConnected[cam] = isOnline;
+      if (isOnline) {
+        connectionStrikes[cam] = 0;
+        if (!state.sourcesConnected[cam]) {
+          state.sourcesConnected[cam] = true;
+          stateChanged = true;
+        }
+      } else {
+        connectionStrikes[cam]++;
+        if (
+          connectionStrikes[cam] >= MAX_STRIKES &&
+          state.sourcesConnected[cam]
+        ) {
+          state.sourcesConnected[cam] = false;
+          stateChanged = true;
+        }
+      }
+    }
+
+    // 2. Check Mobile SRT via OBS Media State cursor tracking
+    try {
+      const mediaStatus = await obsMain.call("GetMediaInputStatus", {
+        inputName: "Mobile SRT",
+      });
+
+      let isMobileOnline = false;
+
+      if (mediaStatus.mediaState === "OBS_MEDIA_STATE_PLAYING") {
+        if (mediaStatus.mediaCursor > lastMobileCursor) {
+          isMobileOnline = true;
+          mobileStuckStrikes = 0;
+        } else {
+          mobileStuckStrikes++;
+          if (mobileStuckStrikes < MAX_MOBILE_STRIKES) {
+            isMobileOnline = state.sourcesConnected["Mobile SRT"];
+          }
+        }
+        lastMobileCursor = mediaStatus.mediaCursor;
+      } else {
+        lastMobileCursor = -1;
+        mobileStuckStrikes = MAX_MOBILE_STRIKES;
+      }
+
+      if (state.sourcesConnected["Mobile SRT"] !== isMobileOnline) {
+        state.sourcesConnected["Mobile SRT"] = isMobileOnline;
         stateChanged = true;
+
+        if (!isMobileOnline) {
+          // ACTION: Stream Disconnected
+          if (state.activeScene === "Mobile") {
+            const fallbackScene = state.sourcesConnected["Tail A"]
+              ? "CAM 1"
+              : state.sourcesConnected["Tail B"]
+                ? "CAM 2"
+                : null;
+            if (fallbackScene) {
+              obsMain
+                .call("SetCurrentProgramScene", { sceneName: fallbackScene })
+                .catch(() => {});
+            }
+          }
+        } else {
+          // ACTION: Stream Connected
+          if (state.autoSwitch.mobile && state.activeScene !== "Mobile") {
+            obsMain
+              .call("SetCurrentProgramScene", { sceneName: "Mobile" })
+              .catch(() => {});
+            // Toggle stays armed! The scheduleNextSwitch interval will now "lock" it on Mobile.
+          }
+        }
+      }
+    } catch (e) {
+      if (state.sourcesConnected["Mobile SRT"]) {
+        state.sourcesConnected["Mobile SRT"] = false;
+        stateChanged = true;
+
+        if (state.activeScene === "Mobile") {
+          const fallbackScene = state.sourcesConnected["Tail A"]
+            ? "CAM 1"
+            : state.sourcesConnected["Tail B"]
+              ? "CAM 2"
+              : null;
+          if (fallbackScene) {
+            obsMain
+              .call("SetCurrentProgramScene", { sceneName: fallbackScene })
+              .catch(() => {});
+          }
+        }
       }
     }
 
     if (stateChanged) {
       io.emit("state-update", state);
     }
-  }, 2000); // Checks every 2 seconds
+  }, 2500);
 
   // --- Smart Dynamic Screenshot Loop ---
   async function screenshotLoop() {
@@ -234,7 +347,7 @@ function initOBS(io, state) {
       }
 
       if (hasUpdates) {
-        io.emit("obs-screenshots", currentScreenshots);
+        io.volatile.emit("obs-screenshots", currentScreenshots);
       }
     } finally {
       isFetchingScreenshot = false;
@@ -279,10 +392,21 @@ function initOBS(io, state) {
         await obsMain.call("ToggleStream").catch(() => {});
     });
 
+    // SAVE SETTINGS TO DB WHEN TRIGGERED
     socket.on("update-autoswitch", (config) => {
       state.autoSwitch = { ...state.autoSwitch, ...config };
       io.emit("state-update", state);
       scheduleNextSwitch();
+
+      db.run(
+        "UPDATE auto_switch SET enabled = ?, mobile = ?, min = ?, max = ? WHERE id = 1",
+        [
+          state.autoSwitch.enabled ? 1 : 0,
+          state.autoSwitch.mobile ? 1 : 0,
+          state.autoSwitch.min,
+          state.autoSwitch.max,
+        ],
+      );
     });
   });
 }

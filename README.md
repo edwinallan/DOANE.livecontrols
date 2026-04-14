@@ -17,7 +17,8 @@ This system is built for a specific hardware and software stack:
 Installation and execution are handled automatically via the included Mac executable command script (`Start_Studio.command`).
 
 1. Clone the repository to your Mac.
-2. Double-click the `Start_Studio.command` file.
+2. Make sure to have your .env file created. Constants are: VITE_OBS_PASSWORD, YT_CLIENT_ID,YT_CLIENT_SECRET, MODEM_PASSWORD
+3. Double-click the `Start_Studio.command` file.
 
 **What the script does:**
 

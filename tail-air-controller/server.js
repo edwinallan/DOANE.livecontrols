@@ -11,6 +11,7 @@ const state = require("./server.store");
 const { initOSC } = require("./server.osc");
 const { initOBS } = require("./server.obs");
 const { initYouTube } = require("./server.youtube");
+const { initModem } = require("./server.modem");
 
 // --- SERVER SETUP ---
 const app = express();
@@ -26,6 +27,7 @@ app.use(express.static(path.join(__dirname, "dist")));
 initOSC(io, state);
 initOBS(io, state);
 initYouTube(app, io, state);
+initModem(io, state);
 
 // Default Connection Handler
 io.on("connection", (socket) => {

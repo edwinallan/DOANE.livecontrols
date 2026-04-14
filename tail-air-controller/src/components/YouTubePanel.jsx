@@ -21,6 +21,11 @@ export default function YouTubePanel({
   const [localAction, setLocalAction] = useState(false);
   const chatRef = useRef(null);
 
+  // NEW: Check if we are running on the host machine
+  const isLocalhost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+
   useEffect(() => {
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -60,7 +65,7 @@ export default function YouTubePanel({
     state.ytStreamHealth === "good" || state.ytStreamHealth === "ok";
   const isStreamActive = state.ytStreamStatus === "active";
 
-  let goLiveBtnText = "AWAITING OBS";
+  let goLiveBtnText = "AWAITING STREAMING";
   let isGoLiveReady = false;
 
   if (state.ytIsTransitioning || localAction) {
@@ -107,7 +112,6 @@ export default function YouTubePanel({
     }
   };
 
-  // Replaced w-[380px] min-w-[380px] with flex-1
   return (
     <div className="flex flex-col flex-1 bg-zinc-900 rounded-3xl p-5 gap-4 border border-zinc-800 shadow-xl h-full overflow-y-auto relative">
       {state.ytErrorMessage && (
@@ -122,14 +126,24 @@ export default function YouTubePanel({
       <div className="flex justify-between items-center shrink-0">
         <h2 className="text-xl font-bold flex items-center gap-2">YouTube</h2>
         {!state.ytAuthenticated ? (
-          <a
-            href={`${backendUrl}/auth/youtube`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs bg-red-600 px-3 py-1.5 rounded-md font-bold text-white flex items-center gap-1 hover:bg-red-500"
-          >
-            <Youtube size={14} /> AUTHENTICATE
-          </a>
+          isLocalhost ? (
+            <a
+              href={`${backendUrl}/auth/youtube`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs bg-red-600 px-3 py-1.5 rounded-md font-bold text-white flex items-center gap-1 hover:bg-red-500 transition-colors"
+            >
+              <Youtube size={14} /> AUTHENTICATE
+            </a>
+          ) : (
+            <div
+              className="text-[10px] bg-zinc-800 text-zinc-400 px-3 py-1.5 rounded-md font-bold border border-zinc-700 flex items-center gap-1.5 cursor-not-allowed uppercase"
+              title="Google limits OAuth to localhost. Please authenticate directly on the Mac running the server."
+            >
+              <AlertTriangle size={14} className="text-yellow-600" /> AUTH ON
+              DESKTOP
+            </div>
+          )
         ) : !state.ytVideoId ? (
           <div className="flex items-center gap-2">
             <input

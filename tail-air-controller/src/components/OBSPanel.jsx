@@ -62,6 +62,8 @@ export default function OBSPanel({
   handleSceneChange,
   updateAutoSwitch,
   handleToggleStream,
+  modemStats = { battery: 0, charging: false, signal: 0 },
+  isConnected,
 }) {
   const {
     obsConnected,
@@ -83,10 +85,61 @@ export default function OBSPanel({
 
   return (
     <div className="flex flex-col w-[380px] min-w-[380px] bg-zinc-900 rounded-3xl p-5 gap-5 border border-zinc-800 shadow-xl h-full shrink-0 overflow-y-auto">
-      <div className="flex justify-between items-center px-1 shrink-0">
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          DOANE.live
-        </h2>
+      {/* HEADER SECTION */}
+      <div className="flex justify-between items-center bg-zinc-950 rounded-xl px-4 py-3 border border-zinc-800/80 shadow-sm shrink-0">
+        <h1 className="text-xl font-bold tracking-widest text-zinc-100 uppercase">
+          DOANE<span className="text-zinc-500 font-light">.live</span>
+        </h1>
+
+        {/* Conditionally Render ZTE Modem Status HUD based on connection */}
+        {isConnected && (
+          <div className="flex items-center gap-3">
+            {/* Signal Indicator */}
+            <div
+              className="flex items-end gap-[2px] h-3.5"
+              title={`Signal: ${modemStats.signal}/5`}
+            >
+              {[1, 2, 3, 4, 5].map((bar) => (
+                <div
+                  key={bar}
+                  className={`w-1 rounded-sm ${
+                    bar <= modemStats.signal ? "bg-green-500" : "bg-zinc-700"
+                  }`}
+                  style={{ height: `${bar * 20}%` }}
+                />
+              ))}
+            </div>
+
+            <div className="w-[1px] h-3.5 bg-zinc-700" />
+
+            {/* Battery Indicator */}
+            <div className="flex items-center gap-1.5 text-xs font-mono text-zinc-300">
+              <span className="tracking-tighter">{modemStats.battery}%</span>
+              <div
+                className={`relative w-5 h-2.5 border rounded-[2px] p-[1px] ${modemStats.battery <= 20 && !modemStats.charging ? "border-red-500" : "border-zinc-400"}`}
+              >
+                <div
+                  className={`h-full rounded-[1px] transition-all duration-300 ${
+                    modemStats.charging
+                      ? "bg-green-500"
+                      : modemStats.battery <= 20
+                        ? "bg-red-500"
+                        : "bg-white"
+                  }`}
+                  style={{ width: `${modemStats.battery}%` }}
+                />
+                <div
+                  className={`absolute -right-[3px] top-1/2 -translate-y-1/2 w-[2px] h-1.5 rounded-r-[1px] ${modemStats.battery <= 20 && !modemStats.charging ? "bg-red-500" : "bg-zinc-400"}`}
+                />
+              </div>
+
+              {/* Charging Icon */}
+              {modemStats.charging && (
+                <span className="text-green-500 text-[10px] ml-0.5">⚡</span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3 shrink-0">

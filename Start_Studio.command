@@ -62,5 +62,16 @@ else
     npm run build
 fi
 
+echo "Checking if OBS Studio is running..."
+# pgrep checks for a running process matching "OBS"
+if ! pgrep -i "obs" > /dev/null; then
+    echo "OBS is not running. Launching OBS Studio..."
+    open -a "OBS"
+    # Give OBS 5 seconds to load its UI and WebSocket server
+    sleep 5
+else
+    echo "✅ OBS Studio is already running."
+fi
+
 echo "🚀 Starting Headless Node Server..."
 node server.js
