@@ -30,7 +30,10 @@ export default function App() {
   const [obsScreenshots, setObsScreenshots] = useState({});
   const [ytChatMessages, setYtChatMessages] = useState([]);
   const [selectedCams, setSelectedCams] = useState(["Tail A"]);
+
+  // Local zoom state for immediate visual slider feedback
   const [zoomLevel, setZoomLevel] = useState(0);
+
   const [isMuted, setIsMuted] = useState(false);
   const [savingPreset, setSavingPreset] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -44,15 +47,12 @@ export default function App() {
   });
   const [expandedPanel, setExpandedPanel] = useState("camera");
 
-  // NEW: Track the socket connection strictly
   const [isConnected, setIsConnected] = useState(socket.connected);
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
-
-  // THE FIX: Use a ref to track the currently selected cameras for the socket listener
-  // so we don't trigger infinite render loops by placing state setters inside each other.
   const selectedCamsRef = useRef(selectedCams);
+
   useEffect(() => {
     selectedCamsRef.current = selectedCams;
   }, [selectedCams]);
@@ -76,14 +76,6 @@ export default function App() {
       setCamConfigs(configs);
     });
 
-    socket.on("zoom-update", ({ cam, zoom }) => {
-      // THE FIX: Read from the ref instead of the state updater
-      const currentSelected = selectedCamsRef.current;
-      if (currentSelected.length === 1 && currentSelected[0] === cam) {
-        setZoomLevel(zoom);
-      }
-    });
-
     socket.on("yt-chat-update", (newMessages) => {
       setYtChatMessages((prev) => {
         const combined = [...prev, ...newMessages];
@@ -104,14 +96,22 @@ export default function App() {
       socket.off("state-update");
       socket.off("obs-screenshots");
       socket.off("config-update");
-      socket.off("zoom-update");
       socket.off("yt-chat-update");
       socket.off("modem-update");
     };
   }, []);
 
-  // THE FIX: Extract exactly what we want to watch so React's strict equality doesn't
-  // infinitely re-fire if the `sourcesConnected` object gets a new memory reference.
+  // Sync zoom level purely from backend memory when tab changes or data updates
+  useEffect(() => {
+    const primaryCam = selectedCams[0];
+    if (primaryCam && camConfigs[primaryCam]) {
+      const z = camConfigs[primaryCam].zoom;
+      // THE FIX: Provide a strict fallback to 0 if zoom is null/undefined.
+      // This forces the slider to update visually when you switch tabs, even if no data is present yet.
+      setZoomLevel(z !== undefined && z !== null ? z : 0);
+    }
+  }, [selectedCams, camConfigs]);
+
   const tailAOnline = state.sourcesConnected["Tail A"];
   const tailBOnline = state.sourcesConnected["Tail B"];
 
@@ -134,7 +134,6 @@ export default function App() {
         onlineCams.includes(cam),
       );
 
-      // Prevent state update if arrays match
       if (
         validSelected.length === prevSelected.length &&
         validSelected.every((val, i) => val === prevSelected[i])
@@ -213,7 +212,7 @@ export default function App() {
         updateAutoSwitch={updateAutoSwitch}
         handleToggleStream={handleToggleStream}
         modemStats={modemStats}
-        isConnected={isConnected} // <-- Pass down connection state
+        isConnected={isConnected}
       />
 
       <div className="flex flex-1 gap-4 min-w-0">

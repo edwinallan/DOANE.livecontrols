@@ -11,10 +11,16 @@ db.serialize(() => {
   db.run(
     "CREATE TABLE IF NOT EXISTS auth_tokens (id INTEGER PRIMARY KEY CHECK (id = 1), tokens TEXT)",
   );
+
+  // Updated table creation with the new zoom column
   db.run(
-    "CREATE TABLE IF NOT EXISTS camera_config (cam TEXT PRIMARY KEY, aiMode INTEGER, trackingSpeed INTEGER, wbMode INTEGER, colorTemp INTEGER)",
+    "CREATE TABLE IF NOT EXISTS camera_config (cam TEXT PRIMARY KEY, aiMode INTEGER, trackingSpeed INTEGER, wbMode INTEGER, colorTemp INTEGER, zoom INTEGER)",
   );
-  // NEW: Table to save auto-switch settings
+
+  // Safely attempt to add 'zoom' to existing DBs (fails silently if it already exists)
+  db.run("ALTER TABLE camera_config ADD COLUMN zoom INTEGER", (err) => {});
+
+  // Table to save auto-switch settings
   db.run(
     "CREATE TABLE IF NOT EXISTS auto_switch (id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER, mobile INTEGER, min INTEGER, max INTEGER)",
   );

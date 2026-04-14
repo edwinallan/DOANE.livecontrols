@@ -13,12 +13,14 @@ const currentConfigs = {
     trackingSpeed: null,
     wbMode: null,
     colorTemp: null,
+    zoom: null,
   },
   "Tail B": {
     aiMode: null,
     trackingSpeed: null,
     wbMode: null,
     colorTemp: null,
+    zoom: null,
   },
 };
 
@@ -56,10 +58,19 @@ function initOSC(io, state) {
     );
     if (!cam) return;
 
-    // Intercept Zoom Info and broadcast to frontend
+    // Intercept Zoom Info and broadcast to frontend + save to DB
     if (oscMsg.address === "/OBSBOT/WebCam/General/ZoomInfo") {
       const zoomVal = oscMsg.args[0];
-      ioInstance.emit("zoom-update", { cam, zoom: zoomVal });
+
+      if (currentConfigs[cam].zoom !== zoomVal) {
+        currentConfigs[cam].zoom = zoomVal;
+        db.run(
+          `INSERT INTO camera_config (cam, zoom) VALUES (?, ?) 
+           ON CONFLICT(cam) DO UPDATE SET zoom = ?`,
+          [cam, zoomVal, zoomVal],
+        );
+        ioInstance.emit("config-update", currentConfigs);
+      }
 
       const saveRequest = awaitingPresetSave[cam];
       if (saveRequest) {
@@ -145,6 +156,8 @@ function initOSC(io, state) {
             updateField = "wbMode";
           if (address === "/OBSBOT/WebCam/General/SetColorTemperature")
             updateField = "colorTemp";
+          if (address === "/OBSBOT/WebCam/General/SetZoom")
+            updateField = "zoom";
 
           if (updateField) {
             currentConfigs[cam][updateField] = oscValue;
@@ -317,6 +330,17 @@ function updateCameraIP(cam, ip) {
               {
                 address: "/OBSBOT/WebCam/General/SetColorTemperature",
                 args: [{ type: "i", value: row.colorTemp }],
+              },
+              ip,
+              57110,
+            );
+          }
+          if (row.zoom !== null) {
+            currentConfigs[cam].zoom = row.zoom;
+            udpPort.send(
+              {
+                address: "/OBSBOT/WebCam/General/SetZoom",
+                args: [{ type: "i", value: row.zoom }],
               },
               ip,
               57110,
