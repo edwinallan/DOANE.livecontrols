@@ -9,9 +9,10 @@ const state = require("./server.store");
 
 // Import our isolated modules
 const { initOSC } = require("./server.osc");
-const { initOBS } = require("./server.obs");
+const { initOBS, obsMain, getCurrentScreenshots } = require("./server.obs"); // UPDATED
 const { initYouTube } = require("./server.youtube");
 const { initModem } = require("./server.modem");
+const { initSync } = require("./server.sync"); // NEW: Import Sync Module
 
 // --- SERVER SETUP ---
 const app = express();
@@ -28,6 +29,9 @@ initOSC(io, state);
 initOBS(io, state);
 initYouTube(app, io, state);
 initModem(io, state);
+
+// NEW: Initialize the A/V Sync Engine
+initSync(io, state, obsMain, getCurrentScreenshots);
 
 // Default Connection Handler
 io.on("connection", (socket) => {

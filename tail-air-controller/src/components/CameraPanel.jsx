@@ -33,8 +33,8 @@ export default function CameraPanel({
   toggleRecording,
   recordingTime,
   formatTime,
-  isMuted,
-  setIsMuted,
+  audioMuted, // NEW PROP: state.audioMuted from backend
+  toggleMute, // NEW PROP: Function to emit toggle to backend
   zoomLevel,
   setZoomLevel,
   handlePresetDown,
@@ -68,28 +68,21 @@ export default function CameraPanel({
   const panelInner =
     "bg-zinc-950 p-4 rounded-2xl border border-zinc-800 shrink-0";
 
-  /**
-   * Evaluates if a button should be Active, Default, or Visual Mixed State (Dashed)
-   * if multiple cameras are selected but their configs don't match.
-   */
   const getBtnStyle = (valFn, activeClass, defaultClass = "") => {
     const isA = valFn(camConfigs["Tail A"] || {});
     const isB = valFn(camConfigs["Tail B"] || {});
 
-    // If only one camera is selected, just return strictly active/default based on that one
     if (selectedCams.length === 1) {
       const isActive = selectedCams[0] === "Tail A" ? isA : isB;
       return isActive ? activeClass : defaultClass;
     }
 
-    // Both cameras selected
-    if (isA && isB) return activeClass; // They both share this setting
+    if (isA && isB) return activeClass;
     if (isA || isB)
-      return "!bg-zinc-900 !border-dashed !border-[3px] !border-zinc-400 !text-zinc-300 !shadow-none"; // Discrepancy detected
-    return defaultClass; // Neither has this setting
+      return "!bg-zinc-900 !border-dashed !border-[3px] !border-zinc-400 !text-zinc-300 !shadow-none";
+    return defaultClass;
   };
 
-  // Mixed state explicitly for the slider
   const zoomMixed =
     selectedCams.length === 2 &&
     camConfigs["Tail A"]?.zoom !== camConfigs["Tail B"]?.zoom;
@@ -97,11 +90,25 @@ export default function CameraPanel({
     "[&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:border-[3px] [&::-webkit-slider-thumb]:border-blue-500";
   const thumbDashed =
     "[&::-webkit-slider-thumb]:bg-zinc-900 [&::-webkit-slider-thumb]:border-[3px] [&::-webkit-slider-thumb]:border-dashed [&::-webkit-slider-thumb]:border-zinc-400 [&::-webkit-slider-thumb]:shadow-none";
-  const sliderClass = `w-full h-2 appearance-none bg-zinc-800 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:rounded-full transition-all ${zoomMixed ? thumbDashed : thumbFilled}`;
+  const sliderClass = `w-full h-2 appearance-none bg-zinc-800 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:rounded-full transition-all ${
+    zoomMixed ? thumbDashed : thumbFilled
+  }`;
+
+  // AUDIO LOGIC: If both selected, default to Tail A's status. If one selected, use it.
+  const activeAudioCam = selectedCams.includes("Tail A")
+    ? "Tail A"
+    : selectedCams.includes("Tail B")
+      ? "Tail B"
+      : null;
+
+  // Safe check if audioMuted hasn't populated yet
+  const isMuted = activeAudioCam
+    ? (audioMuted?.[activeAudioCam] ?? true)
+    : true;
 
   return (
     <div className="flex-1 bg-zinc-900 rounded-3xl p-5 flex flex-col space-y-5 border border-zinc-800 shadow-xl overflow-y-auto min-h-0">
-      {/* --- SMART SEGMENTED TAB BAR --- */}
+      {/* SMART SEGMENTED TAB BAR */}
       <div className="flex bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800 shrink-0">
         {allOffline ? (
           <button className="w-full py-4 text-lg tracking-wide rounded-xl font-black text-zinc-700 bg-zinc-950 cursor-not-allowed">
@@ -151,7 +158,9 @@ export default function CameraPanel({
 
       {/* Control Grid */}
       <div
-        className={`grid grid-cols-2 gap-5 flex-1 min-h-0 transition-opacity duration-300 ${allOffline ? "opacity-30 pointer-events-none" : ""}`}
+        className={`grid grid-cols-2 gap-5 flex-1 min-h-0 transition-opacity duration-300 ${
+          allOffline ? "opacity-30 pointer-events-none" : ""
+        }`}
       >
         {/* COL 1: AI TRACKING & COLOR */}
         <div className="flex flex-col space-y-5 min-h-0">
@@ -177,7 +186,10 @@ export default function CameraPanel({
                   onClick={() =>
                     sendOSC("/OBSBOT/Camera/TailAir/SetTrackingSpeed", idx)
                   }
-                  className={`${btnBase} py-3 text-sm transition-all ${getBtnStyle((c) => c.trackingSpeed === idx, btnActive)}`}
+                  className={`${btnBase} py-3 text-sm transition-all ${getBtnStyle(
+                    (c) => c.trackingSpeed === idx,
+                    btnActive,
+                  )}`}
                 >
                   {speed}
                 </button>
@@ -191,7 +203,10 @@ export default function CameraPanel({
                   sendOSC("/OBSBOT/WebCam/General/SetZoom", 0);
                   setZoomLevel(0);
                 }}
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.aiMode === 1, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.aiMode === 1,
+                  btnActive,
+                )}`}
               >
                 <Focus size={28} className="text-blue-400 mb-1" /> AUTO
               </button>
@@ -201,7 +216,10 @@ export default function CameraPanel({
                   sendOSC("/OBSBOT/WebCam/General/SetZoom", 0);
                   setZoomLevel(0);
                 }}
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.aiMode === 2, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.aiMode === 2,
+                  btnActive,
+                )}`}
               >
                 <MonitorUp size={28} className="text-blue-400 mb-1" /> UPPER
               </button>
@@ -211,7 +229,10 @@ export default function CameraPanel({
                   sendOSC("/OBSBOT/WebCam/General/SetZoom", 0);
                   setZoomLevel(0);
                 }}
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.aiMode === 3, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.aiMode === 3,
+                  btnActive,
+                )}`}
               >
                 <User size={28} className="text-blue-400 mb-1" /> CLOSE
               </button>
@@ -221,7 +242,10 @@ export default function CameraPanel({
                   sendOSC("/OBSBOT/WebCam/General/SetZoom", 0);
                   setZoomLevel(0);
                 }}
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.aiMode === 7, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.aiMode === 7,
+                  btnActive,
+                )}`}
               >
                 <Users size={28} className="text-blue-400 mb-1" /> GROUP
               </button>
@@ -235,7 +259,10 @@ export default function CameraPanel({
                 onClick={() =>
                   sendOSC("/OBSBOT/WebCam/General/SetColorTemperature", 3200)
                 }
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.wbMode === 0 && c.colorTemp === 3200, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.wbMode === 0 && c.colorTemp === 3200,
+                  btnActive,
+                )}`}
               >
                 <Lightbulb size={28} className="text-amber-400 mb-1" /> TUNGSTEN
               </button>
@@ -243,7 +270,10 @@ export default function CameraPanel({
                 onClick={() =>
                   sendOSC("/OBSBOT/WebCam/General/SetAutoWhiteBalance", 1)
                 }
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.wbMode === 1, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.wbMode === 1,
+                  btnActive,
+                )}`}
               >
                 <Aperture size={28} className="text-white mb-1" /> AUTO
               </button>
@@ -251,7 +281,10 @@ export default function CameraPanel({
                 onClick={() =>
                   sendOSC("/OBSBOT/WebCam/General/SetColorTemperature", 5500)
                 }
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.wbMode === 0 && c.colorTemp === 5500, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.wbMode === 0 && c.colorTemp === 5500,
+                  btnActive,
+                )}`}
               >
                 <Sun size={28} className="text-orange-500 mb-1" /> DAY
               </button>
@@ -259,7 +292,10 @@ export default function CameraPanel({
                 onClick={() =>
                   sendOSC("/OBSBOT/WebCam/General/SetColorTemperature", 6500)
                 }
-                className={`${btnBase} py-4 text-xs ${getBtnStyle((c) => c.wbMode === 0 && c.colorTemp === 6500, btnActive)}`}
+                className={`${btnBase} py-4 text-xs ${getBtnStyle(
+                  (c) => c.wbMode === 0 && c.colorTemp === 6500,
+                  btnActive,
+                )}`}
               >
                 <Cloud size={28} className="text-cyan-400 mb-1" /> CLOUD
               </button>
@@ -284,7 +320,10 @@ export default function CameraPanel({
                       btn.val,
                     )
                   }
-                  className={`${btnBase} py-2 text-[11px] sm:text-xs transition-all ${getBtnStyle((c) => (c.expComp ?? 0) === btn.val, btnActive)}`}
+                  className={`${btnBase} py-2 text-[11px] sm:text-xs transition-all ${getBtnStyle(
+                    (c) => (c.expComp ?? 0) === btn.val,
+                    btnActive,
+                  )}`}
                 >
                   {btn.label}
                 </button>
@@ -299,32 +338,36 @@ export default function CameraPanel({
             <div className="text-xs uppercase tracking-widest text-zinc-500 font-black">
               Capture
             </div>
+            {/* UPDATED REC AND MUTE BUTTONS */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={toggleRecording}
-                className={`py-5 rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-all ${
+                className={`py-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all ${
                   isRecording
                     ? "bg-red-600 text-white shadow-[0_0_15px_rgba(220,53,69,0.5)]"
                     : "bg-zinc-800 text-zinc-300 border-[3px] border-transparent"
                 }`}
               >
                 {isRecording ? (
-                  <Square fill="currentColor" size={24} />
+                  <Square fill="currentColor" size={20} />
                 ) : (
-                  <Video size={24} />
+                  <Video size={20} />
                 )}
                 {isRecording ? formatTime(recordingTime) : "REC"}
               </button>
               <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`py-5 rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-all ${
-                  isMuted
-                    ? "bg-orange-600 text-white"
-                    : "bg-zinc-800 text-zinc-300 border-[3px] border-transparent"
-                }`}
+                onClick={() => {
+                  if (activeAudioCam) toggleMute(activeAudioCam);
+                }}
+                disabled={!activeAudioCam}
+                className={`py-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all ${
+                  !isMuted
+                    ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]"
+                    : "bg-zinc-800 text-zinc-500 border-[3px] border-transparent"
+                } ${!activeAudioCam ? "opacity-50 cursor-not-allowed" : ""}`}
               >
-                {isMuted ? <MicOff size={24} /> : <Mic size={24} />}{" "}
-                {isMuted ? "MUTE" : "ON"}
+                {!isMuted ? <Mic size={20} /> : <MicOff size={20} />}
+                {!isMuted ? "ON" : "MUTED"}
               </button>
             </div>
           </div>
@@ -444,7 +487,6 @@ export default function CameraPanel({
                     const val = parseInt(e.target.value);
                     setZoomLevel(val);
                     sendOSC("/OBSBOT/WebCam/General/SetZoom", val);
-                    // Turn off AI mode whenever manual zoom is adjusted
                     sendOSC("/OBSBOT/Camera/TailAir/SetAiMode", 0);
                   }}
                   className={sliderClass}

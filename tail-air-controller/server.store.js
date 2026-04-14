@@ -5,6 +5,8 @@ module.exports = {
   streamBitrate: 0,
   isRecording: false,
   sourcesConnected: { "Tail A": false, "Tail B": false, "Mobile SRT": false },
+  audioMuted: { "Tail A": true, "Tail B": true },
+  syncOffsets: { "Tail A": null, "Tail B": null, "Mobile SRT": null },
   autoSwitch: { enabled: false, mobile: false, min: 5, max: 15 },
   ytAuthenticated: false,
   ytVideoId: null,

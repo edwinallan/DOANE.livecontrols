@@ -119,15 +119,28 @@ function initOBS(io, state) {
       );
       state.activeScene = currentProgramSceneName;
 
-      // --- NEW: RESUME STREAMING AFTER CRASH ---
+      // RESUME STREAMING AFTER CRASH
       if (wasStreamingBeforeCrash) {
         console.log("🔄 Recovering stream state: Restarting Stream...");
         await obsMain.call("StartStream").catch(() => {});
-        wasStreamingBeforeCrash = false; // Reset the flag once handled
+        wasStreamingBeforeCrash = false;
       }
 
       const streamStatus = await obsMain.call("GetStreamStatus");
       state.isStreaming = streamStatus.outputActive;
+
+      // --- NEW: FETCH INITIAL MUTE STATES ---
+      if (!state.audioMuted) state.audioMuted = {};
+      for (const cam of ["Tail A", "Tail B"]) {
+        try {
+          const res = await obsMain.call("GetInputMute", { inputName: cam });
+          state.audioMuted[cam] = res.inputMuted;
+        } catch (e) {
+          // Input might not exist yet or failed
+          state.audioMuted[cam] = true;
+        }
+      }
+
       io.emit("state-update", state);
 
       fetchCameraIPs();
@@ -135,26 +148,26 @@ function initOBS(io, state) {
     } catch (err) {
       state.obsConnected = false;
       io.emit("state-update", state);
-
-      // --- NEW: FORCE OBS TO OPEN ON FAILURE ---
-      // If the connection fails, it likely means OBS is fully closed.
-      // Using 'open -a' on macOS is safe to spam; if it's already open it just brings it to the front.
       exec('open -a "OBS"');
-
       setTimeout(connectOBS, 5000);
     }
   }
 
   connectOBS();
 
+  // --- NEW: TRACK MUTE STATE CHANGES ---
+  obsMain.on("InputMuteStateChanged", (data) => {
+    if (data.inputName === "Tail A" || data.inputName === "Tail B") {
+      state.audioMuted[data.inputName] = data.inputMuted;
+      io.emit("state-update", state);
+    }
+  });
+
   obsMain.on("ConnectionClosed", () => {
     console.log("⚠️ OBS Connection Closed or Crashed.");
     state.obsConnected = false;
-
-    // --- NEW: SAVE STREAM STATE & RELAUNCH ---
     wasStreamingBeforeCrash = state.isStreaming;
     exec('open -a "OBS"');
-
     io.emit("state-update", state);
     setTimeout(connectOBS, 3000);
   });
@@ -253,7 +266,6 @@ function initOBS(io, state) {
         stateChanged = true;
 
         if (!isMobileOnline) {
-          // ACTION: Stream Disconnected
           if (state.activeScene === "Mobile") {
             const fallbackScene = state.sourcesConnected["Tail A"]
               ? "CAM 1"
@@ -267,12 +279,10 @@ function initOBS(io, state) {
             }
           }
         } else {
-          // ACTION: Stream Connected
           if (state.autoSwitch.mobile && state.activeScene !== "Mobile") {
             obsMain
               .call("SetCurrentProgramScene", { sceneName: "Mobile" })
               .catch(() => {});
-            // Toggle stays armed! The scheduleNextSwitch interval will now "lock" it on Mobile.
           }
         }
       }
@@ -392,7 +402,15 @@ function initOBS(io, state) {
         await obsMain.call("ToggleStream").catch(() => {});
     });
 
-    // SAVE SETTINGS TO DB WHEN TRIGGERED
+    // --- NEW: TOGGLE MUTE SOCKET LISTENER ---
+    socket.on("toggle-mute", async (camName) => {
+      if (state.obsConnected) {
+        await obsMain
+          .call("ToggleInputMute", { inputName: camName })
+          .catch(() => {});
+      }
+    });
+
     socket.on("update-autoswitch", (config) => {
       state.autoSwitch = { ...state.autoSwitch, ...config };
       io.emit("state-update", state);
@@ -411,4 +429,9 @@ function initOBS(io, state) {
   });
 }
 
-module.exports = { initOBS, setOBSStreamKey };
+// --- HELPER TO EXPORT SCREENSHOTS FOR SYNC ENGINE ---
+function getCurrentScreenshots() {
+  return currentScreenshots;
+}
+
+module.exports = { initOBS, setOBSStreamKey, obsMain, getCurrentScreenshots };

@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import OBSPanel from "./components/OBSPanel";
 import CameraPanel from "./components/CameraPanel";
 import YouTubePanel from "./components/YouTubePanel";
+import SyncOverlay from "./components/SyncOverlay";
 
 const backendUrl = `http://${window.location.hostname}:4000`;
 const socket = io(backendUrl);
@@ -14,6 +15,8 @@ export default function App() {
     isStreaming: false,
     streamBitrate: 0,
     sourcesConnected: { "Tail A": false, "Tail B": false, "Mobile SRT": false },
+    audioMuted: { "Tail A": true, "Tail B": true },
+    syncOffsets: { "Tail A": null, "Tail B": null, "Mobile SRT": null },
     autoSwitch: { enabled: false, mobile: false, min: 5, max: 15 },
     ytAuthenticated: false,
     ytVideoId: null,
@@ -31,10 +34,7 @@ export default function App() {
   const [ytChatMessages, setYtChatMessages] = useState([]);
   const [selectedCams, setSelectedCams] = useState(["Tail A"]);
 
-  // Local zoom state for immediate visual slider feedback
   const [zoomLevel, setZoomLevel] = useState(0);
-
-  const [isMuted, setIsMuted] = useState(false);
   const [savingPreset, setSavingPreset] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -48,6 +48,9 @@ export default function App() {
   const [expandedPanel, setExpandedPanel] = useState("camera");
 
   const [isConnected, setIsConnected] = useState(socket.connected);
+
+  const [showSyncOverlay, setShowSyncOverlay] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("idle"); // NEW: 'idle' | 'syncing' | 'failed'
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
@@ -90,6 +93,18 @@ export default function App() {
       setModemStats(data);
     });
 
+    socket.on("sync-complete", () => {
+      setShowSyncOverlay(false);
+      setSyncStatus("idle");
+    });
+
+    // NEW: Handle failure state
+    socket.on("sync-failed", () => {
+      setShowSyncOverlay(false);
+      setSyncStatus("failed");
+      setTimeout(() => setSyncStatus("idle"), 3000); // Revert after 3s
+    });
+
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
@@ -98,16 +113,15 @@ export default function App() {
       socket.off("config-update");
       socket.off("yt-chat-update");
       socket.off("modem-update");
+      socket.off("sync-complete");
+      socket.off("sync-failed");
     };
   }, []);
 
-  // Sync zoom level purely from backend memory when tab changes or data updates
   useEffect(() => {
     const primaryCam = selectedCams[0];
     if (primaryCam && camConfigs[primaryCam]) {
       const z = camConfigs[primaryCam].zoom;
-      // THE FIX: Provide a strict fallback to 0 if zoom is null/undefined.
-      // This forces the slider to update visually when you switch tabs, even if no data is present yet.
       setZoomLevel(z !== undefined && z !== null ? z : 0);
     }
   }, [selectedCams, camConfigs]);
@@ -156,6 +170,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isRecording]);
 
+  // NEW: Failsafe timeout to prevent getting stuck on the QR screen
+  useEffect(() => {
+    let timeout;
+    if (syncStatus === "syncing") {
+      timeout = setTimeout(() => {
+        setShowSyncOverlay(false);
+        setSyncStatus("failed");
+        setTimeout(() => setSyncStatus("idle"), 3000);
+      }, 7000); // 7 second absolute maximum
+    }
+    return () => clearTimeout(timeout);
+  }, [syncStatus]);
+
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60)
       .toString()
@@ -170,6 +197,17 @@ export default function App() {
     socket.emit("update-autoswitch", newConfig);
   const handleStartYTStream = (title) => socket.emit("start-yt-stream", title);
   const handleGoLiveYT = () => socket.emit("go-live-yt");
+
+  const triggerSync = () => {
+    if (syncStatus === "syncing") return;
+    setShowSyncOverlay(true);
+    setSyncStatus("syncing");
+    socket.emit("start-sync");
+  };
+
+  const toggleMute = (camName) => {
+    socket.emit("toggle-mute", camName);
+  };
 
   const sendOSC = (address, value) => {
     if (selectedCams.length > 0) {
@@ -204,50 +242,63 @@ export default function App() {
   };
 
   return (
-    <div className="flex w-full h-screen overflow-hidden bg-zinc-950 text-white select-none p-4 gap-4">
-      <OBSPanel
-        state={state}
-        obsScreenshots={obsScreenshots}
-        handleSceneChange={handleSceneChange}
-        updateAutoSwitch={updateAutoSwitch}
-        handleToggleStream={handleToggleStream}
-        modemStats={modemStats}
-        isConnected={isConnected}
-      />
-
-      <div className="flex flex-1 gap-4 min-w-0">
-        <CameraPanel
-          isExpanded={expandedPanel === "camera"}
-          onExpand={() => setExpandedPanel("camera")}
-          sourcesConnected={state.sourcesConnected}
-          selectedCams={selectedCams}
-          setSelectedCams={setSelectedCams}
-          sendOSC={sendOSC}
-          isRecording={isRecording}
-          toggleRecording={toggleRecording}
-          recordingTime={recordingTime}
-          formatTime={formatTime}
-          isMuted={isMuted}
-          setIsMuted={setIsMuted}
-          zoomLevel={zoomLevel}
-          setZoomLevel={setZoomLevel}
-          handlePresetDown={handlePresetDown}
-          handlePresetUp={handlePresetUp}
-          holdTimerRef={holdTimerRef}
-          savingPreset={savingPreset}
-          camConfigs={camConfigs}
+    <>
+      {showSyncOverlay && (
+        <SyncOverlay
+          onCancel={() => {
+            setShowSyncOverlay(false);
+            setSyncStatus("idle");
+          }}
         />
+      )}
 
-        <YouTubePanel
-          isExpanded={expandedPanel === "youtube"}
-          onExpand={() => setExpandedPanel("youtube")}
+      <div className="flex w-full h-screen overflow-hidden bg-zinc-950 text-white select-none p-4 gap-4">
+        <OBSPanel
           state={state}
-          ytChatMessages={ytChatMessages}
-          handleStartYTStream={handleStartYTStream}
-          handleGoLiveYT={handleGoLiveYT}
-          backendUrl={backendUrl}
+          obsScreenshots={obsScreenshots}
+          handleSceneChange={handleSceneChange}
+          updateAutoSwitch={updateAutoSwitch}
+          handleToggleStream={handleToggleStream}
+          modemStats={modemStats}
+          isConnected={isConnected}
+          triggerSync={triggerSync}
+          syncStatus={syncStatus} // PASS DOWN THE STATUS
         />
+
+        <div className="flex flex-1 gap-4 min-w-0">
+          <CameraPanel
+            isExpanded={expandedPanel === "camera"}
+            onExpand={() => setExpandedPanel("camera")}
+            sourcesConnected={state.sourcesConnected}
+            selectedCams={selectedCams}
+            setSelectedCams={setSelectedCams}
+            sendOSC={sendOSC}
+            isRecording={isRecording}
+            toggleRecording={toggleRecording}
+            recordingTime={recordingTime}
+            formatTime={formatTime}
+            audioMuted={state.audioMuted}
+            toggleMute={toggleMute}
+            zoomLevel={zoomLevel}
+            setZoomLevel={setZoomLevel}
+            handlePresetDown={handlePresetDown}
+            handlePresetUp={handlePresetUp}
+            holdTimerRef={holdTimerRef}
+            savingPreset={savingPreset}
+            camConfigs={camConfigs}
+          />
+
+          <YouTubePanel
+            isExpanded={expandedPanel === "youtube"}
+            onExpand={() => setExpandedPanel("youtube")}
+            state={state}
+            ytChatMessages={ytChatMessages}
+            handleStartYTStream={handleStartYTStream}
+            handleGoLiveYT={handleGoLiveYT}
+            backendUrl={backendUrl}
+          />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
