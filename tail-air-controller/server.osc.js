@@ -14,6 +14,7 @@ const currentConfigs = {
     wbMode: null,
     colorTemp: null,
     zoom: null,
+    expComp: null,
   },
   "Tail B": {
     aiMode: null,
@@ -21,6 +22,7 @@ const currentConfigs = {
     wbMode: null,
     colorTemp: null,
     zoom: null,
+    expComp: null,
   },
 };
 
@@ -158,6 +160,8 @@ function initOSC(io, state) {
             updateField = "colorTemp";
           if (address === "/OBSBOT/WebCam/General/SetZoom")
             updateField = "zoom";
+          if (address === "/OBSBOT/WebCam/General/SetExposureCompensate")
+            updateField = "expComp";
 
           if (updateField) {
             currentConfigs[cam][updateField] = oscValue;
@@ -346,6 +350,18 @@ function updateCameraIP(cam, ip) {
               57110,
             );
           }
+
+          // Apply Exposure Compensation (Default to 0 if not previously set)
+          const expVal = row.expComp !== null ? row.expComp : 0;
+          currentConfigs[cam].expComp = expVal;
+          udpPort.send(
+            {
+              address: "/OBSBOT/WebCam/General/SetExposureCompensate",
+              args: [{ type: "i", value: expVal }],
+            },
+            ip,
+            57110,
+          );
 
           // Broadcast the restored config to all connected clients
           if (ioInstance) {

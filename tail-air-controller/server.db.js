@@ -12,13 +12,14 @@ db.serialize(() => {
     "CREATE TABLE IF NOT EXISTS auth_tokens (id INTEGER PRIMARY KEY CHECK (id = 1), tokens TEXT)",
   );
 
-  // Updated table creation with the new zoom column
+  // Updated table creation with the new zoom and expComp columns
   db.run(
-    "CREATE TABLE IF NOT EXISTS camera_config (cam TEXT PRIMARY KEY, aiMode INTEGER, trackingSpeed INTEGER, wbMode INTEGER, colorTemp INTEGER, zoom INTEGER)",
+    "CREATE TABLE IF NOT EXISTS camera_config (cam TEXT PRIMARY KEY, aiMode INTEGER, trackingSpeed INTEGER, wbMode INTEGER, colorTemp INTEGER, zoom INTEGER, expComp INTEGER)",
   );
 
-  // Safely attempt to add 'zoom' to existing DBs (fails silently if it already exists)
+  // Safely attempt to add new columns to existing DBs (fails silently if they already exist)
   db.run("ALTER TABLE camera_config ADD COLUMN zoom INTEGER", (err) => {});
+  db.run("ALTER TABLE camera_config ADD COLUMN expComp INTEGER", (err) => {});
 
   // Table to save auto-switch settings
   db.run(

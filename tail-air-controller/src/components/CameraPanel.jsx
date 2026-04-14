@@ -230,7 +230,7 @@ export default function CameraPanel({
             <div className="text-xs uppercase tracking-widest text-zinc-500 font-black mt-2">
               Color
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-auto">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() =>
                   sendOSC("/OBSBOT/WebCam/General/SetColorTemperature", 3200)
@@ -263,6 +263,32 @@ export default function CameraPanel({
               >
                 <Cloud size={28} className="text-cyan-400 mb-1" /> CLOUD
               </button>
+            </div>
+
+            <div className="text-xs uppercase tracking-widest text-zinc-500 font-black mt-3">
+              Exposure
+            </div>
+            <div className="grid grid-cols-5 gap-1 mt-auto">
+              {[
+                { label: "-3", val: -30 },
+                { label: "-1.5", val: -15 },
+                { label: "0", val: 0 },
+                { label: "+1.5", val: 15 },
+                { label: "+3", val: 30 },
+              ].map((btn) => (
+                <button
+                  key={btn.val}
+                  onClick={() =>
+                    sendOSC(
+                      "/OBSBOT/WebCam/General/SetExposureCompensate",
+                      btn.val,
+                    )
+                  }
+                  className={`${btnBase} py-2 text-[11px] sm:text-xs transition-all ${getBtnStyle((c) => (c.expComp ?? 0) === btn.val, btnActive)}`}
+                >
+                  {btn.label}
+                </button>
+              ))}
             </div>
           </div>
         </div>

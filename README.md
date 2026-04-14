@@ -20,12 +20,14 @@ Installation and execution are handled automatically via the included Mac execut
 2. Make sure to have your .env file created. Constants are: VITE_OBS_PASSWORD, YT_CLIENT_ID,YT_CLIENT_SECRET, MODEM_PASSWORD
 3. Double-click the `Start_Studio.command` file.
 
+To stop the node server from running, open the `Stop_Studio.command` file.
+
 **What the script does:**
 
 - **Checks Dependencies:** It verifies that Homebrew, Git, and Node.js/npm are installed on your macOS system.
 - **Guides Installation:** If any dependencies are missing, the script pauses and provides the exact Terminal commands needed to install them.
 - **Updates & Builds:** It navigates to the app directory and pulls the latest updates from the `main` branch via Git. If updates are found or build files are missing, it automatically runs `npm install` and `npm run build`.
-- **Starts the Server:** Finally, it launches the headless Node server to power the backend.
+- **Starts the Server:** Finally, it launches the headless Node server to power the backend and makes sure OBS is running.
 
 ## 📂 File Structure & Descriptions
 
