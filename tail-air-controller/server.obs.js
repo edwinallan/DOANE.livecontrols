@@ -143,6 +143,37 @@ function initOBS(io, state) {
         }
       }
 
+      // --- NEW: FETCH INITIAL SYNC OFFSETS ---
+      if (!state.syncOffsets)
+        state.syncOffsets = {
+          "Tail A": null,
+          "Tail B": null,
+          "Mobile SRT": null,
+        };
+
+      for (const source of ["Tail A", "Tail B", "Mobile SRT"]) {
+        try {
+          // Query OBS for the specific filter settings
+          const filterRes = await obsMain.call("GetSourceFilter", {
+            sourceName: source,
+            filterName: "Video Delay",
+          });
+
+          // If the filter exists and has a delay_ms applied, update our state
+          if (
+            filterRes &&
+            filterRes.filterSettings &&
+            filterRes.filterSettings.delay_ms !== undefined
+          ) {
+            state.syncOffsets[source] = filterRes.filterSettings.delay_ms;
+          }
+        } catch (e) {
+          // Fails silently if the source doesn't exist or doesn't have the "Video Delay" filter applied yet
+          state.syncOffsets[source] = null;
+        }
+      }
+      // ----------------------------------------
+
       io.emit("state-update", state);
 
       fetchCameraIPs();
