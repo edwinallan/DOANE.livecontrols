@@ -32,7 +32,9 @@ export default function App() {
 
   const [obsScreenshots, setObsScreenshots] = useState({});
   const [ytChatMessages, setYtChatMessages] = useState([]);
-  const [selectedCams, setSelectedCams] = useState(["Tail A"]);
+
+  // UPDATED: Start with an empty selection instead of defaulting to Tail A
+  const [selectedCams, setSelectedCams] = useState([]);
 
   const [zoomLevel, setZoomLevel] = useState(0);
   const [savingPreset, setSavingPreset] = useState(null);
@@ -50,7 +52,7 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(socket.connected);
 
   const [showSyncOverlay, setShowSyncOverlay] = useState(false);
-  const [syncStatus, setSyncStatus] = useState("idle"); // NEW: 'idle' | 'syncing' | 'failed'
+  const [syncStatus, setSyncStatus] = useState("idle");
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
@@ -98,11 +100,10 @@ export default function App() {
       setSyncStatus("idle");
     });
 
-    // NEW: Handle failure state
     socket.on("sync-failed", () => {
       setShowSyncOverlay(false);
       setSyncStatus("failed");
-      setTimeout(() => setSyncStatus("idle"), 3000); // Revert after 3s
+      setTimeout(() => setSyncStatus("idle"), 3000);
     });
 
     return () => {
@@ -129,21 +130,24 @@ export default function App() {
   const tailAOnline = state.sourcesConnected["Tail A"];
   const tailBOnline = state.sourcesConnected["Tail B"];
 
+  // UPDATED: Logic to handle camera auto-selection
   useEffect(() => {
     const onlineCams = [];
     if (tailAOnline) onlineCams.push("Tail A");
     if (tailBOnline) onlineCams.push("Tail B");
 
     setSelectedCams((prevSelected) => {
+      // 1. If everything is offline, empty the selection
       if (onlineCams.length === 0) {
-        return prevSelected.length === 0 ? prevSelected : [];
-      }
-      if (onlineCams.length === 1) {
-        return prevSelected.length === 1 && prevSelected[0] === onlineCams[0]
-          ? prevSelected
-          : [...onlineCams];
+        return [];
       }
 
+      // 2. If only one is online, force select that single camera
+      if (onlineCams.length === 1) {
+        return [...onlineCams];
+      }
+
+      // 3. Keep the user's valid selection if both are online
       const validSelected = prevSelected.filter((cam) =>
         onlineCams.includes(cam),
       );
@@ -156,7 +160,9 @@ export default function App() {
       }
 
       if (validSelected.length > 0) return validSelected;
-      return ["Tail A"];
+
+      // 4. Default to selecting both cameras on load if available
+      return ["Tail A", "Tail B"];
     });
   }, [tailAOnline, tailBOnline]);
 
@@ -170,7 +176,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isRecording]);
 
-  // NEW: Failsafe timeout to prevent getting stuck on the QR screen
   useEffect(() => {
     let timeout;
     if (syncStatus === "syncing") {
@@ -178,7 +183,7 @@ export default function App() {
         setShowSyncOverlay(false);
         setSyncStatus("failed");
         setTimeout(() => setSyncStatus("idle"), 3000);
-      }, 7000); // 7 second absolute maximum
+      }, 7000);
     }
     return () => clearTimeout(timeout);
   }, [syncStatus]);
@@ -262,7 +267,7 @@ export default function App() {
           modemStats={modemStats}
           isConnected={isConnected}
           triggerSync={triggerSync}
-          syncStatus={syncStatus} // PASS DOWN THE STATUS
+          syncStatus={syncStatus}
         />
 
         <div className="flex flex-1 gap-4 min-w-0">

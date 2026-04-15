@@ -16,12 +16,15 @@ const lastMoveTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
 const lastFetchTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
 const currentScreenshots = {};
 
+// Track which scene is currently being high-res previewed
+let highResScene = null;
+
 // --- Connection Tracking Caches ---
 const localCameraIPs = { "Tail A": null, "Tail B": null };
 const connectionStrikes = { "Tail A": 0, "Tail B": 0 };
 const MAX_STRIKES = 3;
 
-// NEW: SRT Cursor Tracking
+// --- SRT Cursor Tracking ---
 let lastMobileCursor = -1;
 let mobileStuckStrikes = 0;
 const MAX_MOBILE_STRIKES = 2;
@@ -129,14 +132,13 @@ function initOBS(io, state) {
       const streamStatus = await obsMain.call("GetStreamStatus");
       state.isStreaming = streamStatus.outputActive;
 
-      // --- NEW: FETCH INITIAL MUTE STATES ---
+      // FETCH INITIAL MUTE STATES
       if (!state.audioMuted) state.audioMuted = {};
       for (const cam of ["Tail A", "Tail B"]) {
         try {
           const res = await obsMain.call("GetInputMute", { inputName: cam });
           state.audioMuted[cam] = res.inputMuted;
         } catch (e) {
-          // Input might not exist yet or failed
           state.audioMuted[cam] = true;
         }
       }
@@ -155,7 +157,6 @@ function initOBS(io, state) {
 
   connectOBS();
 
-  // --- NEW: TRACK MUTE STATE CHANGES ---
   obsMain.on("InputMuteStateChanged", (data) => {
     if (data.inputName === "Tail A" || data.inputName === "Tail B") {
       state.audioMuted[data.inputName] = data.inputMuted;
@@ -329,21 +330,44 @@ function initOBS(io, state) {
       let hasUpdates = false;
 
       for (const scene of scenesToFetch) {
+        const isPreviewing = highResScene === scene;
         const isMoving = now - lastMoveTime[scene] < 1500;
+
+        let intervalTarget = 1000;
+
+        // Define payload framework
+        const reqPayload = {
+          sourceName: scene,
+          imageFormat: "jpeg",
+        };
+
+        if (isPreviewing) {
+          intervalTarget = 500; // ~2 FPS
+
+          // UPDATED: By explicitly omitting imageWidth and imageHeight entirely,
+          // OBS is forced to bypass its scaler and return the raw, native
+          // resolution of your source. This guarantees maximum sharpness.
+          reqPayload.imageCompressionQuality = 85;
+        } else {
+          // Standard Thumbnail Settings
+          reqPayload.imageWidth = 480;
+          reqPayload.imageHeight = 270;
+
+          if (isMoving) {
+            intervalTarget = 66; // ~15 FPS tracking
+            reqPayload.imageCompressionQuality = 25;
+          } else {
+            reqPayload.imageCompressionQuality = 50;
+          }
+        }
+
         const timeSinceLastFetch = now - lastFetchTime[scene];
-        const intervalTarget = isMoving ? 66 : 1000;
 
         if (timeSinceLastFetch >= intervalTarget) {
           lastFetchTime[scene] = now;
 
           const res = await obsMain
-            .call("GetSourceScreenshot", {
-              sourceName: scene,
-              imageFormat: "jpeg",
-              imageWidth: 480,
-              imageHeight: 270,
-              imageCompressionQuality: isMoving ? 25 : 50,
-            })
+            .call("GetSourceScreenshot", reqPayload)
             .catch(() => null);
 
           if (res && res.imageData) {
@@ -390,11 +414,22 @@ function initOBS(io, state) {
       });
     });
 
+    // UPDATED: Scene Change Event
     socket.on("set-scene", async (sceneName) => {
-      if (state.obsConnected)
+      if (state.obsConnected) {
         await obsMain
           .call("SetCurrentProgramScene", { sceneName })
           .catch(() => {});
+
+        // Turn off auto-switch if a user manually forces a camera change
+        if (state.autoSwitch.enabled) {
+          state.autoSwitch.enabled = false;
+          io.emit("state-update", state);
+          clearTimeout(autoSwitchTimer);
+
+          db.run("UPDATE auto_switch SET enabled = 0 WHERE id = 1");
+        }
+      }
     });
 
     socket.on("toggle-stream", async () => {
@@ -402,13 +437,20 @@ function initOBS(io, state) {
         await obsMain.call("ToggleStream").catch(() => {});
     });
 
-    // --- NEW: TOGGLE MUTE SOCKET LISTENER ---
     socket.on("toggle-mute", async (camName) => {
       if (state.obsConnected) {
         await obsMain
           .call("ToggleInputMute", { inputName: camName })
           .catch(() => {});
       }
+    });
+
+    socket.on("start-preview", (sceneName) => {
+      highResScene = sceneName;
+    });
+
+    socket.on("stop-preview", () => {
+      highResScene = null;
     });
 
     socket.on("update-autoswitch", (config) => {
@@ -429,7 +471,6 @@ function initOBS(io, state) {
   });
 }
 
-// --- HELPER TO EXPORT SCREENSHOTS FOR SYNC ENGINE ---
 function getCurrentScreenshots() {
   return currentScreenshots;
 }

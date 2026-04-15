@@ -33,8 +33,8 @@ export default function CameraPanel({
   toggleRecording,
   recordingTime,
   formatTime,
-  audioMuted, // NEW PROP: state.audioMuted from backend
-  toggleMute, // NEW PROP: Function to emit toggle to backend
+  audioMuted,
+  toggleMute,
   zoomLevel,
   setZoomLevel,
   handlePresetDown,
@@ -59,6 +59,10 @@ export default function CameraPanel({
 
   const onlineCams = ["Tail A", "Tail B"].filter((c) => sourcesConnected?.[c]);
   const allOffline = onlineCams.length === 0;
+
+  // UPDATED: Check if user has actively deselected all cameras, and combine for the master disable switch
+  const noneSelected = selectedCams.length === 0;
+  const disableControls = allOffline || noneSelected;
 
   // Base and Active style strings
   const btnBase =
@@ -94,14 +98,12 @@ export default function CameraPanel({
     zoomMixed ? thumbDashed : thumbFilled
   }`;
 
-  // AUDIO LOGIC: If both selected, default to Tail A's status. If one selected, use it.
   const activeAudioCam = selectedCams.includes("Tail A")
     ? "Tail A"
     : selectedCams.includes("Tail B")
       ? "Tail B"
       : null;
 
-  // Safe check if audioMuted hasn't populated yet
   const isMuted = activeAudioCam
     ? (audioMuted?.[activeAudioCam] ?? true)
     : true;
@@ -123,7 +125,13 @@ export default function CameraPanel({
         ) : (
           <>
             <button
-              onClick={() => setSelectedCams(["Tail A"])}
+              onClick={() =>
+                setSelectedCams((prev) =>
+                  prev.includes("Tail A") && prev.length === 1
+                    ? []
+                    : ["Tail A"],
+                )
+              }
               className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
                 selectedCams.length === 1 && selectedCams[0] === "Tail A"
                   ? `${btnActive} !border-transparent`
@@ -133,7 +141,11 @@ export default function CameraPanel({
               Tail A
             </button>
             <button
-              onClick={() => setSelectedCams(["Tail A", "Tail B"])}
+              onClick={() =>
+                setSelectedCams((prev) =>
+                  prev.length === 2 ? [] : ["Tail A", "Tail B"],
+                )
+              }
               className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
                 selectedCams.length === 2
                   ? `${btnActive} !border-transparent`
@@ -143,7 +155,13 @@ export default function CameraPanel({
               Tail A & B
             </button>
             <button
-              onClick={() => setSelectedCams(["Tail B"])}
+              onClick={() =>
+                setSelectedCams((prev) =>
+                  prev.includes("Tail B") && prev.length === 1
+                    ? []
+                    : ["Tail B"],
+                )
+              }
               className={`flex-1 py-3 text-base tracking-wide rounded-xl font-black transition-all ${
                 selectedCams.length === 1 && selectedCams[0] === "Tail B"
                   ? `${btnActive} !border-transparent`
@@ -156,10 +174,10 @@ export default function CameraPanel({
         )}
       </div>
 
-      {/* Control Grid */}
+      {/* Control Grid - UPDATED with disableControls */}
       <div
         className={`grid grid-cols-2 gap-5 flex-1 min-h-0 transition-opacity duration-300 ${
-          allOffline ? "opacity-30 pointer-events-none" : ""
+          disableControls ? "opacity-30 pointer-events-none" : ""
         }`}
       >
         {/* COL 1: AI TRACKING & COLOR */}
@@ -338,7 +356,6 @@ export default function CameraPanel({
             <div className="text-xs uppercase tracking-widest text-zinc-500 font-black">
               Capture
             </div>
-            {/* UPDATED REC AND MUTE BUTTONS */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={toggleRecording}
