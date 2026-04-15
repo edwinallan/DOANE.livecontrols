@@ -36,17 +36,36 @@ echo "-----------------------------------"
 cd "$(dirname "$0")" || exit 1
 
 echo "Checking for updates..."
-# Capture the output of git pull into a variable
-GIT_OUTPUT=$(git pull origin main)
 
-# Print the git output so you can still see it in the terminal
-echo "$GIT_OUTPUT"
+# --- NEW FORCE UPDATE LOGIC ---
+# 1. Fetch the latest info from the remote without merging
+git fetch origin main > /dev/null 2>&1
 
-# Navigate into the app directory (adjust this if your folder name is different)
+# 2. Compare local version to remote version
+LOCAL_HASH=$(git rev-parse HEAD)
+REMOTE_HASH=$(git rev-parse origin/main)
+
+if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+    echo "📦 Updates found. Discarding local changes (including .DS_Store) and syncing..."
+    
+    # 3. Force the local branch to match the remote exactly
+    git reset --hard origin/main
+    
+    # 4. Remove untracked files (this nukes .DS_Store files if they aren't in the repo)
+    git clean -fd
+    
+    GIT_OUTPUT="Updated"
+else
+    GIT_OUTPUT="Already up to date."
+    echo "$GIT_OUTPUT"
+fi
+# ------------------------------
+
+# Navigate into the app directory
 cd tail-air-controller || { echo "❌ App directory not found!"; exit 1; }
 
-# Check if git is up to date AND that the build folders actually exist
-if [[ "$GIT_OUTPUT" == *"Already up to date."* ]] && [ -d "dist" ] && [ -d "node_modules" ]; then
+# Check if we updated OR if the build folders are missing
+if [[ "$GIT_OUTPUT" == "Already up to date." ]] && [ -d "dist" ] && [ -d "node_modules" ]; then
     echo "-----------------------------------"
     echo "⚡ No new updates. Skipping install and build..."
     echo "-----------------------------------"
@@ -63,27 +82,21 @@ else
 fi
 
 echo "Checking if OBS Studio is running..."
-# pgrep checks for a running process matching "OBS"
 if ! pgrep -i "obs" > /dev/null; then
     echo "OBS is not running. Launching OBS Studio..."
     open -a "OBS"
-    # Give OBS 5 seconds to load its UI and WebSocket server
     sleep 5
 else
     echo "✅ OBS Studio is already running."
 fi
 
 echo "🚀 Starting Headless Node Server in the background..."
-
-# Launch Node in the background, detached from this terminal session.
-# Errors and logs will be saved to a new 'server.log' file.
 nohup node server.js > server.log 2>&1 &
 disown
 
-# Give the server a second to boot
 sleep 1
 
-# Smart close: Quit Terminal if it's the only window, otherwise just close this window
+# Smart close: Quit Terminal if it's the only window
 osascript -e 'tell application "Terminal"' \
           -e 'if (count of windows) is less than or equal to 1 then' \
           -e 'quit' \

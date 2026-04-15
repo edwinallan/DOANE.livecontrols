@@ -33,7 +33,7 @@ export default function App() {
   const [obsScreenshots, setObsScreenshots] = useState({});
   const [ytChatMessages, setYtChatMessages] = useState([]);
 
-  // UPDATED: Start with an empty selection instead of defaulting to Tail A
+  // Start with an empty selection instead of defaulting to Tail A
   const [selectedCams, setSelectedCams] = useState([]);
 
   const [zoomLevel, setZoomLevel] = useState(0);
@@ -130,24 +130,21 @@ export default function App() {
   const tailAOnline = state.sourcesConnected["Tail A"];
   const tailBOnline = state.sourcesConnected["Tail B"];
 
-  // UPDATED: Logic to handle camera auto-selection
+  // Logic to handle camera auto-selection
   useEffect(() => {
     const onlineCams = [];
     if (tailAOnline) onlineCams.push("Tail A");
     if (tailBOnline) onlineCams.push("Tail B");
 
     setSelectedCams((prevSelected) => {
-      // 1. If everything is offline, empty the selection
       if (onlineCams.length === 0) {
         return [];
       }
 
-      // 2. If only one is online, force select that single camera
       if (onlineCams.length === 1) {
         return [...onlineCams];
       }
 
-      // 3. Keep the user's valid selection if both are online
       const validSelected = prevSelected.filter((cam) =>
         onlineCams.includes(cam),
       );
@@ -161,7 +158,6 @@ export default function App() {
 
       if (validSelected.length > 0) return validSelected;
 
-      // 4. Default to selecting both cameras on load if available
       return ["Tail A", "Tail B"];
     });
   }, [tailAOnline, tailBOnline]);
@@ -184,6 +180,11 @@ export default function App() {
         setSyncStatus("failed");
         setTimeout(() => setSyncStatus("idle"), 3000);
       }, 7000);
+    } else if (syncStatus === "beep-sync") {
+      timeout = setTimeout(() => {
+        setSyncStatus("failed");
+        setTimeout(() => setSyncStatus("idle"), 3000);
+      }, 15000); // Longer timeout for beep-sync due to recording & FFmpeg processing
     }
     return () => clearTimeout(timeout);
   }, [syncStatus]);
@@ -204,10 +205,16 @@ export default function App() {
   const handleGoLiveYT = () => socket.emit("go-live-yt");
 
   const triggerSync = () => {
-    if (syncStatus === "syncing") return;
+    if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
     setShowSyncOverlay(true);
     setSyncStatus("syncing");
     socket.emit("start-sync");
+  };
+
+  const triggerBeepSync = () => {
+    if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
+    setSyncStatus("beep-sync");
+    socket.emit("start-beep-sync");
   };
 
   const toggleMute = (camName) => {
@@ -248,7 +255,6 @@ export default function App() {
 
   return (
     <>
-      {/* NEW: Disconnected Server Overlay */}
       {!isConnected && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="p-8 text-center bg-red-950 border border-red-500 rounded-2xl shadow-2xl flex flex-col items-center max-w-md">
@@ -302,6 +308,7 @@ export default function App() {
           modemStats={modemStats}
           isConnected={isConnected}
           triggerSync={triggerSync}
+          triggerBeepSync={triggerBeepSync}
           syncStatus={syncStatus}
         />
 

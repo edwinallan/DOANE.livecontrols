@@ -24,12 +24,11 @@ const SceneButton = ({
   const handlePressStart = (e) => {
     if (!isOnline) return;
 
-    // Distinguish between touch and mouse to prevent double-firing
     if (e.type.startsWith("touch")) {
       isTouch.current = true;
     } else if (e.type === "mousedown") {
-      if (isTouch.current) return; // Ignore simulated mouse down
-      if (e.button !== 0) return; // Must be a left-click
+      if (isTouch.current) return;
+      if (e.button !== 0) return;
     }
 
     if (pressTimer.current) clearTimeout(pressTimer.current);
@@ -42,19 +41,16 @@ const SceneButton = ({
   };
 
   const handlePressEnd = (e) => {
-    // Ignore simulated mouse up on touch devices
     if (e.type === "mouseup" && isTouch.current) return;
 
     if (pressTimer.current) clearTimeout(pressTimer.current);
 
-    // Trigger scene change if the user released before the timer hit
     if (!isLongPress.current && isOnline) {
       handleSceneChange(sceneName);
     }
   };
 
   const handleCancel = () => {
-    // If the finger moves (swipes) or leaves the element, cancel the long press
     if (pressTimer.current) clearTimeout(pressTimer.current);
   };
 
@@ -70,8 +66,8 @@ const SceneButton = ({
       onContextMenu={(e) => e.preventDefault()}
       disabled={!isOnline}
       style={{
-        WebkitTouchCallout: "none", // Disables iOS popup menu
-        WebkitUserSelect: "none", // Disables iOS text selection
+        WebkitTouchCallout: "none",
+        WebkitUserSelect: "none",
         userSelect: "none",
       }}
       className={`relative w-full block h-0 pb-[56.25%] bg-zinc-800 rounded-xl overflow-hidden border-2 transition-all group shrink-0 select-none ${
@@ -135,6 +131,7 @@ export default function OBSPanel({
   modemStats = { battery: 0, charging: false, signal: 0 },
   isConnected,
   triggerSync,
+  triggerBeepSync,
   syncStatus,
   handleStartPreview,
   handleStopPreview,
@@ -162,12 +159,12 @@ export default function OBSPanel({
 
   const handleLongPress = (data) => {
     setPreviewData(data);
-    handleStartPreview(data.sceneName);
+    if (handleStartPreview) handleStartPreview(data.sceneName);
   };
 
   const closePreview = () => {
     setPreviewData(null);
-    handleStopPreview();
+    if (handleStopPreview) handleStopPreview();
   };
 
   return (
@@ -331,24 +328,36 @@ export default function OBSPanel({
             </div>
           </label>
 
-          {/* DYNAMIC SYNC BUTTON */}
-          <button
-            onClick={triggerSync}
-            disabled={syncStatus === "syncing"}
-            className={`w-full py-2.5 mt-1 rounded-lg font-bold text-[11px] tracking-widest uppercase transition-colors ${
-              syncStatus === "failed"
-                ? "bg-red-600/20 text-red-400 border border-red-500/50"
-                : syncStatus === "syncing"
-                  ? "bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed"
-                  : "bg-blue-600/10 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
-            }`}
-          >
-            {syncStatus === "failed"
-              ? "SYNC FAILED"
-              : syncStatus === "syncing"
-                ? "CALIBRATING..."
-                : "CALIBRATE A/V SYNC"}
-          </button>
+          {/* DYNAMIC SYNC BUTTONS */}
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <button
+              onClick={triggerSync}
+              disabled={syncStatus === "syncing" || syncStatus === "beep-sync"}
+              className={`w-full py-2.5 rounded-lg font-bold text-[11px] tracking-widest uppercase transition-colors ${
+                syncStatus === "failed"
+                  ? "bg-red-600/20 text-red-400 border border-red-500/50"
+                  : syncStatus === "syncing"
+                    ? "bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed"
+                    : "bg-blue-600/10 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
+              }`}
+            >
+              {syncStatus === "syncing" ? "FLASHING..." : "FLASH SYNC"}
+            </button>
+
+            <button
+              onClick={triggerBeepSync}
+              disabled={syncStatus === "syncing" || syncStatus === "beep-sync"}
+              className={`w-full py-2.5 rounded-lg font-bold text-[11px] tracking-widest uppercase transition-colors ${
+                syncStatus === "failed"
+                  ? "bg-red-600/20 text-red-400 border border-red-500/50"
+                  : syncStatus === "beep-sync"
+                    ? "bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed animate-pulse"
+                    : "bg-emerald-600/10 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30"
+              }`}
+            >
+              {syncStatus === "beep-sync" ? "LISTENING..." : "BEEP SYNC"}
+            </button>
+          </div>
         </div>
 
         <div className="mt-auto pt-4 shrink-0">
