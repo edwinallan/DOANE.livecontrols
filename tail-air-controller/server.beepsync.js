@@ -8,28 +8,68 @@ function initBeepSync(io, state, obsMain) {
     "Tail A": 0, // Track 1
     "Tail B": 1, // Track 2
     "Mobile SRT": 2, // Track 3
-    "Master Beep": 3, // Track 4 (Logic Pro / Base Audio)
+    "Acoustic Master": 3, // Track 4 (Physical Mic in the room)
+    "Digital Loopback": 4, // Track 5 (Direct digital feed from Logic/System)
   };
 
-  // Helper function to extract the peak timestamp using FFmpeg
-  const analyzeTrack = (filePath, trackIndex) => {
+  // Helper function to extract the peak timestamp using Two-Pass FFmpeg
+  const analyzeTrack = async (filePath, trackIndex) => {
+    // --- PASS 1: Find the Loudest 3kHz Peak ---
+    const peakVolume = await new Promise((resolve) => {
+      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=3000:width_type=h:w=500,volumedetect" -f null - 2>&1`;
+      exec(cmd, (err, stdout) => {
+        const match = stdout.match(/max_volume:\s*([-0-9.]+)\s*dB/);
+        if (match && match[1]) {
+          resolve(parseFloat(match[1]));
+        } else {
+          resolve(0); // If it fails to find a peak, default to 0
+        }
+      });
+    });
+
+    // --- CALCULATE GAIN ---
+    // Push the peak volume up to a healthy -2.0 dB
+    let gainDb = 0;
+    if (peakVolume < -2.0) {
+      gainDb = Math.abs(peakVolume) - 2.0;
+    }
+
+    // --- PASS 2: Apply Gain & Run Rhythm Detection ---
     return new Promise((resolve) => {
-      // 1. Map to specific audio track
-      // 2. Bandpass: Isolates 2750Hz-3250Hz
-      // 3. Loudnorm: Normalizes the isolated frequency to a standard loud volume (-24 LUFS)
-      // 4. SilenceDetect: Finds exactly when the now-normalized 3kHz sounds start
-      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=3000:width_type=h:w=500,loudnorm,silencedetect=noise=-15dB:d=0.05" -f null - 2>&1`;
+      const filterStr = `bandpass=f=3000:width_type=h:w=500,volume=${gainDb}dB,silencedetect=noise=-15dB:d=0.25`;
+      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "${filterStr}" -f null - 2>&1`;
 
       exec(cmd, (err, stdout) => {
-        // Find all silence_end timestamps
-        const matches = [...stdout.matchAll(/silence_end:\s*([\d\.]+)/g)];
+        // Find all silence_end timestamps and parse them into an array of floats
+        const rawBeeps = [...stdout.matchAll(/silence_end:\s*([\d\.]+)/g)].map(
+          (m) => parseFloat(m[1]),
+        );
 
-        // SECURITY CHECK: Verify we found at least 3 beeps to eliminate false positives
-        if (matches && matches.length >= 3) {
-          // Return the timestamp of the FIRST beep in the valid sequence
-          resolve(parseFloat(matches[0][1]));
-        } else {
-          // Failed the security check (either quiet, missed, or a single random noise)
+        if (rawBeeps.length < 3) {
+          resolve(null); // Not enough spikes to form a pattern
+          return;
+        }
+
+        let foundRhythm = false;
+
+        // SLIDING WINDOW RHYTHM CHECK
+        for (let i = 0; i < rawBeeps.length - 2; i++) {
+          const intervalA = rawBeeps[i + 1] - rawBeeps[i];
+          const intervalB = rawBeeps[i + 2] - rawBeeps[i + 1];
+          const variance = Math.abs(intervalA - intervalB);
+
+          // Criteria:
+          // 1. Intervals must be similar (variance <= 0.15s)
+          // 2. Beeps shouldn't be insanely close or far (between 0.2s and 1.5s apart)
+          if (variance <= 0.15 && intervalA > 0.2 && intervalA < 1.5) {
+            resolve(rawBeeps[i]); // Return the timestamp of the FIRST beep in the valid sequence
+            foundRhythm = true;
+            break;
+          }
+        }
+
+        if (!foundRhythm) {
+          // Found spikes, but none matched the rhythm
           resolve(null);
         }
       });
@@ -41,7 +81,7 @@ function initBeepSync(io, state, obsMain) {
       if (isSyncing) return;
       isSyncing = true;
       console.log(
-        "\n🔊 Starting Audio Beep Sync Workflow (Normalized 3-Beep Check)...",
+        "\n🔊 Starting Audio Beep Sync Workflow (5-Track Speaker Latency Analysis)...",
       );
 
       try {
@@ -59,7 +99,7 @@ function initBeepSync(io, state, obsMain) {
           .catch(() => {});
         await obsMain
           .call("SetInputAudioSyncOffset", {
-            inputName: "Mic/Aux",
+            inputName: "Internal Mic",
             inputAudioSyncOffset: 0,
           })
           .catch(() => {});
@@ -104,7 +144,7 @@ function initBeepSync(io, state, obsMain) {
         );
         await obsMain.call("StartRecord");
 
-        await new Promise((r) => setTimeout(r, 2500));
+        await new Promise((r) => setTimeout(r, 10));
 
         console.log("   ▶️ Triggering 'beep' media source...");
         await obsMain.call("TriggerMediaInputAction", {
@@ -138,7 +178,11 @@ function initBeepSync(io, state, obsMain) {
 
         // --- FFMPEG ANALYSIS ---
         const timestamps = {};
-        const tracksToAnalyze = ["Master Beep", ...activeSources];
+        const tracksToAnalyze = [
+          "Acoustic Master",
+          "Digital Loopback",
+          ...activeSources,
+        ];
 
         for (const source of tracksToAnalyze) {
           const idx = trackMapping[source];
@@ -147,73 +191,104 @@ function initBeepSync(io, state, obsMain) {
             if (ts !== null) {
               timestamps[source] = ts;
               console.log(
-                `      ⏱️ ${source}: 3-Beep Sequence Verified! (Start: ${ts.toFixed(3)}s)`,
+                `      ⏱️ ${source}: Rhythm Locked! (Start: ${ts.toFixed(3)}s)`,
               );
             } else {
-              console.log(
-                `      ⚠️ ${source}: Sequence NOT Detected! (Skipping calculation, offset remains at 0ms)`,
-              );
+              console.log(`      ⚠️ ${source}: Sequence NOT Detected!`);
             }
           }
         }
 
-        const validSources = Object.keys(timestamps);
-        if (!timestamps["Master Beep"] || validSources.length < 2) {
+        if (!timestamps["Digital Loopback"] || !timestamps["Acoustic Master"]) {
           throw new Error(
-            "Could not detect 3-beep sequence on Master Track and at least one camera.",
+            "CRITICAL: Could not detect rhythm sequence on Digital Loopback or Acoustic Master track.",
           );
         }
 
-        // --- CALCULATE DELAYS ---
-        const allTs = Object.values(timestamps);
-        const slowestTs = Math.max(...allTs);
-        const masterScene = Object.keys(timestamps).find(
-          (s) => timestamps[s] === slowestTs,
+        const validSources = Object.keys(timestamps).filter((s) =>
+          activeSources.includes(s),
         );
+        if (validSources.length === 0) {
+          throw new Error("Could not detect rhythm sequence on any camera.");
+        }
 
-        console.log(`\n📐 --- BEEP SYNC CALCULATIONS ---`);
-        console.log(`👑 SLOWEST SOURCE: ${masterScene} (Used as baseline)`);
+        // --- LATENCY MATH & DIAGNOSTICS ---
+        console.log(`\n📐 === LATENCY & OFFSET CALCULATIONS ===`);
 
-        for (const source of activeSources) {
-          if (!validSources.includes(source)) {
+        const digitalTs = timestamps["Digital Loopback"];
+        const acousticTs = timestamps["Acoustic Master"];
+
+        // Calculate the physical speaker/room delay
+        const speakerDelayMs = Math.round((acousticTs - digitalTs) * 1000);
+        console.log(`🔊 SPEAKER / ROOM DELAY: ${speakerDelayMs}ms`);
+        console.log(`   (Time sound spent traveling through hardware and air)`);
+        console.log(`--------------------------------------------------`);
+
+        for (const cam of activeSources) {
+          if (timestamps[cam]) {
+            const netDelayMs = Math.round(
+              (timestamps[cam] - acousticTs) * 1000,
+            );
+            console.log(`📡 ${cam} True Network Latency: ${netDelayMs}ms`);
+          } else {
             console.log(
-              `   ⚠️ ${source}: Sequence undetected. Sync offset left at default (0ms).`,
+              `   ⚠️ ${cam}: Sequence undetected. Sync offset left at default (0ms).`,
             );
           }
         }
+        console.log(`--------------------------------------------------`);
 
+        // Find the slowest acoustic source to use as our baseline for OBS offsets
+        const allAcousticTs = [acousticTs];
+        for (const cam of validSources) {
+          allAcousticTs.push(timestamps[cam]);
+        }
+
+        const slowestTs = Math.max(...allAcousticTs);
+
+        let slowestSource = "Acoustic Master";
+        for (const [name, ts] of Object.entries(timestamps)) {
+          if (ts === slowestTs && name !== "Digital Loopback") {
+            slowestSource = name;
+          }
+        }
+
+        console.log(
+          `👑 SLOWEST ACOUSTIC SOURCE: ${slowestSource} (Used as baseline)`,
+        );
+
+        // Calculate Logic/Mic offset based on the Acoustic Master
+        const baseAudioDelayMs = Math.round((slowestTs - acousticTs) * 1000);
+        console.log(
+          `   💻 Base Audio offset calculated: +${baseAudioDelayMs}ms`,
+        );
+        console.log(
+          `      Applying +${baseAudioDelayMs}ms audio sync offset to 'Logic' and 'Internal Mic'...`,
+        );
+
+        await obsMain
+          .call("SetInputAudioSyncOffset", {
+            inputName: "Logic",
+            inputAudioSyncOffset: baseAudioDelayMs,
+          })
+          .catch(() =>
+            console.log(`      ⚠️ Could not set audio offset for 'Logic'.`),
+          );
+
+        await obsMain
+          .call("SetInputAudioSyncOffset", {
+            inputName: "Internal Mic",
+            inputAudioSyncOffset: baseAudioDelayMs,
+          })
+          .catch(() =>
+            console.log(
+              `      ⚠️ Could not set audio offset for 'Internal Mic'.`,
+            ),
+          );
+
+        // Calculate camera offsets based on their respective acoustic delays
         for (const source of validSources) {
           const delayMs = Math.round((slowestTs - timestamps[source]) * 1000);
-
-          if (source === "Master Beep") {
-            console.log(`   💻 Base Audio offset calculated: +${delayMs}ms`);
-            console.log(
-              `      Applying +${delayMs}ms audio sync offset to 'Logic' and 'Mic/Aux'...`,
-            );
-
-            await obsMain
-              .call("SetInputAudioSyncOffset", {
-                inputName: "Logic",
-                inputAudioSyncOffset: delayMs,
-              })
-              .catch(() =>
-                console.log(`      ⚠️ Could not set audio offset for 'Logic'.`),
-              );
-
-            await obsMain
-              .call("SetInputAudioSyncOffset", {
-                inputName: "Mic/Aux",
-                inputAudioSyncOffset: delayMs,
-              })
-              .catch(() =>
-                console.log(
-                  `      ⚠️ Could not set audio offset for 'Mic/Aux'.`,
-                ),
-              );
-
-            continue;
-          }
-
           console.log(`   🎥 ${source} Delay needed: +${delayMs}ms`);
           state.syncOffsets[source] = delayMs;
 
