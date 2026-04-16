@@ -15,16 +15,21 @@ function initBeepSync(io, state, obsMain) {
   const analyzeTrack = (filePath, trackIndex) => {
     return new Promise((resolve) => {
       // 1. Map to specific audio track
-      // 2. Bandpass filter isolates 2750Hz-3250Hz (kills room noise)
-      // 3. SilenceDetect finds exactly when the 3kHz sound starts
-      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=3000:width_type=h:w=500,silencedetect=noise=-25dB:d=0.1" -f null - 2>&1`;
+      // 2. Bandpass: Isolates 2750Hz-3250Hz
+      // 3. Loudnorm: Normalizes the isolated frequency to a standard loud volume (-24 LUFS)
+      // 4. SilenceDetect: Finds exactly when the now-normalized 3kHz sounds start
+      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=3000:width_type=h:w=500,loudnorm,silencedetect=noise=-15dB:d=0.05" -f null - 2>&1`;
 
       exec(cmd, (err, stdout) => {
         // Find all silence_end timestamps
         const matches = [...stdout.matchAll(/silence_end:\s*([\d\.]+)/g)];
-        if (matches && matches.length > 0) {
-          resolve(parseFloat(matches[0][1])); // Return the first beep timestamp in seconds
+
+        // SECURITY CHECK: Verify we found at least 3 beeps to eliminate false positives
+        if (matches && matches.length >= 3) {
+          // Return the timestamp of the FIRST beep in the valid sequence
+          resolve(parseFloat(matches[0][1]));
         } else {
+          // Failed the security check (either quiet, missed, or a single random noise)
           resolve(null);
         }
       });
@@ -35,7 +40,9 @@ function initBeepSync(io, state, obsMain) {
     socket.on("start-beep-sync", async () => {
       if (isSyncing) return;
       isSyncing = true;
-      console.log("\n🔊 Starting Audio Beep Sync Workflow...");
+      console.log(
+        "\n🔊 Starting Audio Beep Sync Workflow (Normalized 3-Beep Check)...",
+      );
 
       try {
         const originalMuteStates = { ...state.audioMuted };
@@ -105,7 +112,8 @@ function initBeepSync(io, state, obsMain) {
           mediaAction: "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
         });
 
-        await new Promise((r) => setTimeout(r, 6000));
+        // AUGMENTED WAIT TIME: Gives heavily delayed SRT mobile streams time to catch the 3 beeps
+        await new Promise((r) => setTimeout(r, 12000));
 
         console.log("   ⏹️ Stopping OBS recording...");
         const stopRes = await obsMain.call("StopRecord");
@@ -139,10 +147,12 @@ function initBeepSync(io, state, obsMain) {
             if (ts !== null) {
               timestamps[source] = ts;
               console.log(
-                `      ⏱️ ${source} Beep Detected at: ${ts.toFixed(3)}s`,
+                `      ⏱️ ${source}: 3-Beep Sequence Verified! (Start: ${ts.toFixed(3)}s)`,
               );
             } else {
-              console.log(`      ⚠️ ${source} Beep NOT Detected (Skipping).`);
+              console.log(
+                `      ⚠️ ${source}: Sequence NOT Detected! (Skipping calculation, offset remains at 0ms)`,
+              );
             }
           }
         }
@@ -150,7 +160,7 @@ function initBeepSync(io, state, obsMain) {
         const validSources = Object.keys(timestamps);
         if (!timestamps["Master Beep"] || validSources.length < 2) {
           throw new Error(
-            "Could not detect beep on Master Track and at least one camera.",
+            "Could not detect 3-beep sequence on Master Track and at least one camera.",
           );
         }
 
@@ -163,6 +173,14 @@ function initBeepSync(io, state, obsMain) {
 
         console.log(`\n📐 --- BEEP SYNC CALCULATIONS ---`);
         console.log(`👑 SLOWEST SOURCE: ${masterScene} (Used as baseline)`);
+
+        for (const source of activeSources) {
+          if (!validSources.includes(source)) {
+            console.log(
+              `   ⚠️ ${source}: Sequence undetected. Sync offset left at default (0ms).`,
+            );
+          }
+        }
 
         for (const source of validSources) {
           const delayMs = Math.round((slowestTs - timestamps[source]) * 1000);

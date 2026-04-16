@@ -33,7 +33,6 @@ export default function App() {
   const [obsScreenshots, setObsScreenshots] = useState({});
   const [ytChatMessages, setYtChatMessages] = useState([]);
 
-  // Start with an empty selection instead of defaulting to Tail A
   const [selectedCams, setSelectedCams] = useState([]);
 
   const [zoomLevel, setZoomLevel] = useState(0);
@@ -130,7 +129,6 @@ export default function App() {
   const tailAOnline = state.sourcesConnected["Tail A"];
   const tailBOnline = state.sourcesConnected["Tail B"];
 
-  // Logic to handle camera auto-selection
   useEffect(() => {
     const onlineCams = [];
     if (tailAOnline) onlineCams.push("Tail A");
@@ -184,7 +182,7 @@ export default function App() {
       timeout = setTimeout(() => {
         setSyncStatus("failed");
         setTimeout(() => setSyncStatus("idle"), 3000);
-      }, 15000); // Longer timeout for beep-sync due to recording & FFmpeg processing
+      }, 15000);
     }
     return () => clearTimeout(timeout);
   }, [syncStatus]);
@@ -217,8 +215,16 @@ export default function App() {
     socket.emit("start-beep-sync");
   };
 
-  const toggleMute = (camName) => {
-    socket.emit("toggle-mute", camName);
+  // UPDATED: Supports arrays and forcing a specific state to sync multiple cameras perfectly
+  const toggleMute = (camNames, forceMuteState) => {
+    const targets = Array.isArray(camNames) ? camNames : [camNames];
+    targets.forEach((cam) => {
+      if (forceMuteState !== undefined) {
+        socket.emit("set-mute", { camName: cam, isMuted: forceMuteState });
+      } else {
+        socket.emit("toggle-mute", cam);
+      }
+    });
   };
 
   const sendOSC = (address, value) => {

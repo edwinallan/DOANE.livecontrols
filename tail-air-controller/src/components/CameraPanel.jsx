@@ -60,11 +60,9 @@ export default function CameraPanel({
   const onlineCams = ["Tail A", "Tail B"].filter((c) => sourcesConnected?.[c]);
   const allOffline = onlineCams.length === 0;
 
-  // UPDATED: Check if user has actively deselected all cameras, and combine for the master disable switch
   const noneSelected = selectedCams.length === 0;
   const disableControls = allOffline || noneSelected;
 
-  // Base and Active style strings
   const btnBase =
     "bg-zinc-800 border-[3px] border-transparent text-zinc-200 rounded-xl font-bold hover:bg-zinc-700 active:bg-zinc-600 active:scale-95 transition-all flex items-center justify-center gap-2 flex-col select-none touch-manipulation";
   const btnActive =
@@ -98,19 +96,18 @@ export default function CameraPanel({
     zoomMixed ? thumbDashed : thumbFilled
   }`;
 
-  const activeAudioCam = selectedCams.includes("Tail A")
-    ? "Tail A"
-    : selectedCams.includes("Tail B")
-      ? "Tail B"
-      : null;
+  // NEW: Detect if we have multiple cameras selected and their mute states are out of sync
+  const isMixedMute =
+    selectedCams.length === 2 &&
+    audioMuted?.["Tail A"] !== audioMuted?.["Tail B"];
 
-  const isMuted = activeAudioCam
-    ? (audioMuted?.[activeAudioCam] ?? true)
-    : true;
+  const isMuted =
+    selectedCams.length > 0
+      ? selectedCams.every((cam) => audioMuted?.[cam] === true)
+      : true;
 
   return (
     <div className="flex-1 bg-zinc-900 rounded-3xl p-5 flex flex-col space-y-5 border border-zinc-800 shadow-xl overflow-y-auto min-h-0">
-      {/* SMART SEGMENTED TAB BAR */}
       <div className="flex bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800 shrink-0">
         {allOffline ? (
           <button className="w-full py-4 text-lg tracking-wide rounded-xl font-black text-zinc-700 bg-zinc-950 cursor-not-allowed">
@@ -174,13 +171,11 @@ export default function CameraPanel({
         )}
       </div>
 
-      {/* Control Grid - UPDATED with disableControls */}
       <div
         className={`grid grid-cols-2 gap-5 flex-1 min-h-0 transition-opacity duration-300 ${
           disableControls ? "opacity-30 pointer-events-none" : ""
         }`}
       >
-        {/* COL 1: AI TRACKING & COLOR */}
         <div className="flex flex-col space-y-5 min-h-0">
           <div className={`flex flex-col gap-4 ${panelInner} flex-1`}>
             <div className="text-xs uppercase tracking-widest text-zinc-500 font-black">
@@ -350,7 +345,6 @@ export default function CameraPanel({
           </div>
         </div>
 
-        {/* COL 2: CAPTURE, PTZ & PRESETS */}
         <div className="flex flex-col space-y-5 min-h-0">
           <div className={`flex flex-col gap-3 ${panelInner}`}>
             <div className="text-xs uppercase tracking-widest text-zinc-500 font-black">
@@ -361,7 +355,7 @@ export default function CameraPanel({
                 onClick={toggleRecording}
                 className={`py-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all ${
                   isRecording
-                    ? "bg-red-600 text-white shadow-[0_0_15px_rgba(220,53,69,0.5)]"
+                    ? "bg-red-600 text-white shadow-[0_0_15px_rgba(220,53,69,0.5)] border-[3px] border-red-600"
                     : "bg-zinc-800 text-zinc-300 border-[3px] border-transparent"
                 }`}
               >
@@ -372,19 +366,31 @@ export default function CameraPanel({
                 )}
                 {isRecording ? formatTime(recordingTime) : "REC"}
               </button>
+
+              {/* DYNAMIC DASHED MUTE BUTTON */}
               <button
                 onClick={() => {
-                  if (activeAudioCam) toggleMute(activeAudioCam);
+                  if (selectedCams.length > 0) {
+                    toggleMute(selectedCams, !isMuted);
+                  }
                 }}
-                disabled={!activeAudioCam}
+                disabled={selectedCams.length === 0}
                 className={`py-4 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all ${
-                  !isMuted
-                    ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]"
-                    : "bg-zinc-800 text-zinc-500 border-[3px] border-transparent"
-                } ${!activeAudioCam ? "opacity-50 cursor-not-allowed" : ""}`}
+                  isMixedMute
+                    ? "bg-zinc-900 border-[3px] border-dashed border-zinc-400 text-zinc-300 shadow-none"
+                    : !isMuted
+                      ? "bg-blue-600 text-white border-[3px] border-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.4)]"
+                      : "bg-zinc-800 text-zinc-500 border-[3px] border-transparent"
+                } ${selectedCams.length === 0 ? "opacity-50 cursor-not-allowed" : ""}`}
               >
-                {!isMuted ? <Mic size={20} /> : <MicOff size={20} />}
-                {!isMuted ? "ON" : "MUTED"}
+                {isMixedMute ? (
+                  <Mic size={20} className="opacity-50" />
+                ) : !isMuted ? (
+                  <Mic size={20} />
+                ) : (
+                  <MicOff size={20} />
+                )}
+                {isMixedMute ? "MIXED" : !isMuted ? "ON" : "MUTED"}
               </button>
             </div>
           </div>

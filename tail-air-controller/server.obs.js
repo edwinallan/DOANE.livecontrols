@@ -98,7 +98,6 @@ function initOBS(io, state) {
   globalIo = io;
   globalState = state;
 
-  // LOAD AUTO-SWITCH SETTINGS FROM DB ON STARTUP
   db.get("SELECT * FROM auto_switch WHERE id = 1", (err, row) => {
     if (row) {
       state.autoSwitch = {
@@ -122,7 +121,6 @@ function initOBS(io, state) {
       );
       state.activeScene = currentProgramSceneName;
 
-      // RESUME STREAMING AFTER CRASH
       if (wasStreamingBeforeCrash) {
         console.log("🔄 Recovering stream state: Restarting Stream...");
         await obsMain.call("StartStream").catch(() => {});
@@ -143,7 +141,6 @@ function initOBS(io, state) {
         }
       }
 
-      // --- NEW: FETCH INITIAL SYNC OFFSETS ---
       if (!state.syncOffsets)
         state.syncOffsets = {
           "Tail A": null,
@@ -153,13 +150,11 @@ function initOBS(io, state) {
 
       for (const source of ["Tail A", "Tail B", "Mobile SRT"]) {
         try {
-          // Query OBS for the specific filter settings
           const filterRes = await obsMain.call("GetSourceFilter", {
             sourceName: source,
             filterName: "Video Delay",
           });
 
-          // If the filter exists and has a delay_ms applied, update our state
           if (
             filterRes &&
             filterRes.filterSettings &&
@@ -168,11 +163,9 @@ function initOBS(io, state) {
             state.syncOffsets[source] = filterRes.filterSettings.delay_ms;
           }
         } catch (e) {
-          // Fails silently if the source doesn't exist or doesn't have the "Video Delay" filter applied yet
           state.syncOffsets[source] = null;
         }
       }
-      // ----------------------------------------
 
       io.emit("state-update", state);
 
@@ -214,12 +207,10 @@ function initOBS(io, state) {
     io.emit("state-update", state);
   });
 
-  // --- Unified Hardware & Media Tracking Loop ---
   setInterval(async () => {
     if (!state.obsConnected) return;
     let stateChanged = false;
 
-    // 1. Check OBSBOT Cameras via TCP Ping
     for (const cam of ["Tail A", "Tail B"]) {
       const ip = localCameraIPs[cam];
       if (!ip) continue;
@@ -269,7 +260,6 @@ function initOBS(io, state) {
       }
     }
 
-    // 2. Check Mobile SRT via OBS Media State cursor tracking
     try {
       const mediaStatus = await obsMain.call("GetMediaInputStatus", {
         inputName: "Mobile SRT",
@@ -343,7 +333,6 @@ function initOBS(io, state) {
     }
   }, 2500);
 
-  // --- Smart Dynamic Screenshot Loop ---
   async function screenshotLoop() {
     if (
       !state.obsConnected ||
@@ -366,26 +355,20 @@ function initOBS(io, state) {
 
         let intervalTarget = 1000;
 
-        // Define payload framework
         const reqPayload = {
           sourceName: scene,
           imageFormat: "jpeg",
         };
 
         if (isPreviewing) {
-          intervalTarget = 500; // ~2 FPS
-
-          // UPDATED: By explicitly omitting imageWidth and imageHeight entirely,
-          // OBS is forced to bypass its scaler and return the raw, native
-          // resolution of your source. This guarantees maximum sharpness.
+          intervalTarget = 500;
           reqPayload.imageCompressionQuality = 85;
         } else {
-          // Standard Thumbnail Settings
           reqPayload.imageWidth = 480;
           reqPayload.imageHeight = 270;
 
           if (isMoving) {
-            intervalTarget = 66; // ~15 FPS tracking
+            intervalTarget = 66;
             reqPayload.imageCompressionQuality = 25;
           } else {
             reqPayload.imageCompressionQuality = 50;
@@ -445,14 +428,12 @@ function initOBS(io, state) {
       });
     });
 
-    // UPDATED: Scene Change Event
     socket.on("set-scene", async (sceneName) => {
       if (state.obsConnected) {
         await obsMain
           .call("SetCurrentProgramScene", { sceneName })
           .catch(() => {});
 
-        // Turn off auto-switch if a user manually forces a camera change
         if (state.autoSwitch.enabled) {
           state.autoSwitch.enabled = false;
           io.emit("state-update", state);
@@ -472,6 +453,15 @@ function initOBS(io, state) {
       if (state.obsConnected) {
         await obsMain
           .call("ToggleInputMute", { inputName: camName })
+          .catch(() => {});
+      }
+    });
+
+    // NEW: Listen for explicitly forced mute states (fixes multi-camera array grouping)
+    socket.on("set-mute", async ({ camName, isMuted }) => {
+      if (state.obsConnected) {
+        await obsMain
+          .call("SetInputMute", { inputName: camName, inputMuted: isMuted })
           .catch(() => {});
       }
     });
