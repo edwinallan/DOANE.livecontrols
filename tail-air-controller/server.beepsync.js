@@ -12,7 +12,7 @@ function initBeepSync(io, state, obsMain) {
 
   const analyzeTrack = async (filePath, trackIndex) => {
     const peakVolume = await new Promise((resolve) => {
-      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=12000:width_type=h:w=500,volumedetect" -f null - 2>&1`;
+      const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "bandpass=f=3000:width_type=h:w=500,volumedetect" -f null - 2>&1`;
       exec(cmd, (err, stdout) => {
         const match = stdout.match(/max_volume:\s*([-0-9.]+)\s*dB/);
         resolve(match && match[1] ? parseFloat(match[1]) : 0);
@@ -22,7 +22,7 @@ function initBeepSync(io, state, obsMain) {
     let gainDb = peakVolume < -2.0 ? Math.abs(peakVolume) - 2.0 : 0;
 
     return new Promise((resolve) => {
-      const filterStr = `bandpass=f=12000:width_type=h:w=500,volume=${gainDb}dB,silencedetect=noise=-15dB:d=0.25`;
+      const filterStr = `bandpass=f=3000:width_type=h:w=500,volume=${gainDb}dB,silencedetect=noise=-15dB:d=0.25`;
       const cmd = `ffmpeg -i "${filePath}" -map 0:a:${trackIndex} -af "${filterStr}" -f null - 2>&1`;
 
       exec(cmd, (err, stdout) => {
