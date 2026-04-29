@@ -58,14 +58,14 @@ The `server.beepsync.js` script uses a 5-track FFmpeg analysis to strip out phys
    - **Tail A:** Check _ONLY_ Track 1
    - **Tail B:** Check _ONLY_ Track 2
    - **Mobile SRT:** Check _ONLY_ Track 3
-   - **Acoustic Master (Room Mic):** Check _ONLY_ Track 4
+   - **Internal Mic (Room Mic):** Check _ONLY_ Track 4
    - **Digital Loopback (Logic/System audio):** Check _ONLY_ Track 5
 
 ### 4. Audio Monitoring Trap
 
 OBS does **not** apply the "Sync Offset" to Audio Monitoring outputs. If your master microphone is set to "Monitor and Output", the 0ms un-delayed monitoring feed will bleed into your desktop capture and ruin the recording sync.
 
-- In Advanced Audio Properties, ensure all your synchronized sources (especially the Acoustic Master and Logic) are set to **"Monitor Off"**.
+- In Advanced Audio Properties, ensure all your synchronized sources (especially the Internal Mic and Logic) are set to **"Monitor Off"**.
 - Ensure your global audio sources are disabled in OBS Settings, and instead use **"Audio Input Capture"** sources directly in your scenes to prevent buffer bugs.
 
 ## 📂 File Structure & Descriptions
@@ -77,7 +77,7 @@ OBS does **not** apply the "Sync Offset" to Audio Monitoring outputs. If your ma
 - **`server.obs.js`**: Manages the OBS Studio integration via OBS WebSocket. It handles scene switching, dynamic framerate screenshot polling, remote audio muting, and uses bulletproof native TCP pinging (port 57110) to reliably track hardware connection states. Dynamically scales screenshot payloads between compressed JPEGs and raw PNGs.
 - **`server.osc.js`**: Manages Open Sound Control (OSC) UDP communication with the OBSBOT cameras. It sends commands out on port `57110` and listens for hardware callbacks on port `57120`.
 - **`server.sync.js`**: The automated A/V Sync Clapperboard engine. It decodes QR timestamps from live OBS screenshots to calculate visual camera network drift.
-- **`server.beepsync.js`**: The automated Audio Beep Sync engine. It triggers an audio media source in OBS, captures a multi-track recording, and uses a Two-Pass Normalized FFmpeg sliding-window algorithm to detect the 3-beep sync rhythm. It cross-references an Acoustic Master against a Digital Loopback to calculate true physical speaker/room latency, strips it out, and automatically applies precise audio offsets and video delays to OBS.
+- **`server.beepsync.js`**: The automated Audio Beep Sync engine. It triggers an audio media source in OBS, captures a multi-track recording, and uses a Two-Pass Normalized FFmpeg sliding-window algorithm to detect the 3-beep sync rhythm. It cross-references an Internal Mic against a Digital Loopback to calculate true physical speaker/room latency, strips it out, and automatically applies precise audio offsets and video delays to OBS.
 - **`server.store.js`**: Holds the shared, global state object for the backend so that the OBS, OSC, and YouTube modules stay perfectly synchronized.
 - **`server.youtube.js`**: Manages the YouTube API integration. Handles OAuth2 authentication, creates unlisted live broadcasts, binds them to video streams, and polls for live chat messages and stream health.
 

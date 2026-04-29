@@ -10,6 +10,7 @@ let globalIo;
 let autoSwitchTimer;
 let isFetchingScreenshot = false;
 let wasStreamingBeforeCrash = false;
+let isConnecting = false; // Added connection lock
 
 // --- DYNAMIC LOOP STATE ---
 const lastMoveTime = { "CAM 1": 0, "CAM 2": 0, Mobile: 0 };
@@ -111,11 +112,18 @@ function initOBS(io, state) {
   });
 
   async function connectOBS() {
+    // Prevent overlapping connection attempts
+    if (state.obsConnected || isConnecting) return;
+
+    isConnecting = true;
+
     try {
       const obsPassword = process.env.VITE_OBS_PASSWORD || undefined;
       await obsMain.connect("ws://127.0.0.1:4455", obsPassword);
 
       state.obsConnected = true;
+      isConnecting = false; // Reset lock on success
+
       const { currentProgramSceneName } = await obsMain.call(
         "GetCurrentProgramScene",
       );
@@ -173,6 +181,7 @@ function initOBS(io, state) {
       console.log("🎬 Connected to OBS WebSocket");
     } catch (err) {
       state.obsConnected = false;
+      isConnecting = false; // Reset lock on failure
       io.emit("state-update", state);
       exec('open -a "OBS"');
       setTimeout(connectOBS, 5000);
@@ -189,6 +198,9 @@ function initOBS(io, state) {
   });
 
   obsMain.on("ConnectionClosed", () => {
+    // Ignore close events that are just side-effects of failed connection attempts
+    if (!state.obsConnected) return;
+
     console.log("⚠️ OBS Connection Closed or Crashed.");
     state.obsConnected = false;
     wasStreamingBeforeCrash = state.isStreaming;
