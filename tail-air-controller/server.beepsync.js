@@ -259,9 +259,9 @@ function initBeepSync(io, state, obsMain) {
             dynamicWaitTime = Math.max(10000, maxAppliedOffset + 6000);
 
             console.log(
-              `   ⏳ Waiting 4.5s for OBS audio buffers to safely rebuild...`,
+              `   ⏳ Waiting 8.5s for OBS audio buffers to safely rebuild...`,
             );
-            await new Promise((r) => setTimeout(r, 4500));
+            await new Promise((r) => setTimeout(r, 8500));
 
             iteration++;
           }
