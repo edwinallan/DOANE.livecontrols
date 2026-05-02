@@ -52,6 +52,7 @@ export default function App() {
 
   const [showSyncOverlay, setShowSyncOverlay] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle");
+  const [syncMessage, setSyncMessage] = useState("");
 
   const holdTimerRef = useRef(null);
   const isSavingRef = useRef(false);
@@ -99,10 +100,14 @@ export default function App() {
       setSyncStatus("idle");
     });
 
-    socket.on("sync-failed", () => {
+    socket.on("sync-failed", (data) => {
       setShowSyncOverlay(false);
       setSyncStatus("failed");
-      setTimeout(() => setSyncStatus("idle"), 3000);
+      setSyncMessage(data?.message || "Sync failed. Try again.");
+      setTimeout(() => {
+        setSyncStatus("idle");
+        setSyncMessage("");
+      }, 5000);
     });
 
     return () => {
@@ -204,6 +209,7 @@ export default function App() {
 
   const triggerSync = () => {
     if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
+    setSyncMessage("");
     setShowSyncOverlay(true);
     setSyncStatus("syncing");
     socket.emit("start-sync");
@@ -211,6 +217,7 @@ export default function App() {
 
   const triggerBeepSync = () => {
     if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
+    setSyncMessage("");
     setSyncStatus("beep-sync");
     socket.emit("start-beep-sync");
   };
@@ -316,6 +323,7 @@ export default function App() {
           triggerSync={triggerSync}
           triggerBeepSync={triggerBeepSync}
           syncStatus={syncStatus}
+          syncMessage={syncMessage}
         />
 
         <div className="flex flex-1 gap-4 min-w-0">

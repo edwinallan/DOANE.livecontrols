@@ -133,6 +133,7 @@ export default function OBSPanel({
   triggerSync,
   triggerBeepSync,
   syncStatus,
+  syncMessage,
   handleStartPreview,
   handleStopPreview,
 }) {
@@ -358,6 +359,11 @@ export default function OBSPanel({
               {syncStatus === "beep-sync" ? "LISTENING..." : "BEEP SYNC"}
             </button>
           </div>
+          {syncMessage && (
+            <div className="rounded-lg border border-red-500/40 bg-red-950/40 px-3 py-2 text-[11px] font-semibold leading-snug text-red-200">
+              {syncMessage}
+            </div>
+          )}
         </div>
 
         <div className="mt-auto pt-4 shrink-0">

@@ -58,7 +58,9 @@ function initBeepSync(io, state, obsMain) {
           console.log(
             "   ❌ ABORTED: OBS is currently recording. Please stop your recording before calibrating.",
           );
-          io.emit("sync-failed");
+          io.emit("sync-failed", {
+            message: "Stop OBS recording before running Beep Sync.",
+          });
           return;
         }
 
