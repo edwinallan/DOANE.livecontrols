@@ -337,12 +337,18 @@ export default function OBSPanel({
               className={`w-full py-2.5 rounded-lg font-bold text-[11px] tracking-widest uppercase transition-colors ${
                 syncStatus === "failed"
                   ? "bg-red-600/20 text-red-400 border border-red-500/50"
+                  : syncStatus === "sync-complete"
+                    ? "bg-emerald-600/20 text-emerald-300 border border-emerald-500/60"
                   : syncStatus === "syncing"
                     ? "bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed"
                     : "bg-blue-600/10 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30"
               }`}
             >
-              {syncStatus === "syncing" ? "FLASHING..." : "FLASH SYNC"}
+              {syncStatus === "syncing"
+                ? "FLASHING..."
+                : syncStatus === "sync-complete"
+                  ? "DONE"
+                  : "FLASH SYNC"}
             </button>
 
             <button
@@ -351,12 +357,18 @@ export default function OBSPanel({
               className={`w-full py-2.5 rounded-lg font-bold text-[11px] tracking-widest uppercase transition-colors ${
                 syncStatus === "failed"
                   ? "bg-red-600/20 text-red-400 border border-red-500/50"
+                  : syncStatus === "beep-complete"
+                    ? "bg-emerald-600/20 text-emerald-300 border border-emerald-500/60"
                   : syncStatus === "beep-sync"
                     ? "bg-zinc-800 text-zinc-500 border border-zinc-700/50 cursor-not-allowed animate-pulse"
                     : "bg-emerald-600/10 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30"
               }`}
             >
-              {syncStatus === "beep-sync" ? "LISTENING..." : "BEEP SYNC"}
+              {syncStatus === "beep-sync"
+                ? "CALIBRATING..."
+                : syncStatus === "beep-complete"
+                  ? "DONE"
+                  : "BEEP SYNC"}
             </button>
           </div>
           {syncMessage && (

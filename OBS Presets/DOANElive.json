@@ -887,7 +887,7 @@
             },
             "deinterlace_mode": 0,
             "deinterlace_field_order": 0,
-            "monitoring_type": 1,
+            "monitoring_type": 2,
             "private_settings": {}
         },
         {
@@ -1889,10 +1889,13 @@
             "id": "coreaudio_input_capture",
             "versioned_id": "coreaudio_input_capture",
             "settings": {
-                "device_id": "BuiltInMicrophoneDevice"
+                "output-BuiltInMicrophoneDevice-1": 1,
+                "output-BuiltInMicrophoneDevice-2": -1,
+                "device_id": "BuiltInMicrophoneDevice",
+                "enable_downmix": true
             },
             "mixers": 232,
-            "sync": 10855000000,
+            "sync": 0,
             "flags": 0,
             "volume": 1.0,
             "balance": 0.5,
@@ -1924,7 +1927,7 @@
                 "type": 1
             },
             "mixers": 240,
-            "sync": 10855000000,
+            "sync": 2949000000,
             "flags": 0,
             "volume": 1.0,
             "balance": 0.5,
@@ -2393,7 +2396,7 @@
                 "buffering_mb": 8
             },
             "mixers": 228,
-            "sync": 0,
+            "sync": 782000000,
             "flags": 0,
             "volume": 1.0,
             "balance": 0.5,
@@ -2425,7 +2428,7 @@
                     "id": "async_delay_filter",
                     "versioned_id": "async_delay_filter",
                     "settings": {
-                        "delay_ms": 0
+                        "delay_ms": 782
                     },
                     "mixers": 0,
                     "sync": 0,
@@ -2464,7 +2467,7 @@
                 "buffering_mb": 8
             },
             "mixers": 225,
-            "sync": 7442000000,
+            "sync": 0,
             "flags": 2,
             "volume": 1.0,
             "balance": 0.5,
@@ -2496,7 +2499,7 @@
                     "id": "async_delay_filter",
                     "versioned_id": "async_delay_filter",
                     "settings": {
-                        "delay_ms": 7442
+                        "delay_ms": 0
                     },
                     "mixers": 0,
                     "sync": 0,
@@ -2522,8 +2525,9 @@
                     "id": "compressor_filter",
                     "versioned_id": "compressor_filter",
                     "settings": {
-                        "threshold": -14.1,
-                        "output_gain": 10
+                        "threshold": -9.3,
+                        "output_gain": 10,
+                        "ratio": 21.0
                     },
                     "mixers": 255,
                     "sync": 0,
@@ -2588,7 +2592,7 @@
                 "buffering_mb": 8
             },
             "mixers": 226,
-            "sync": 9012000000,
+            "sync": 0,
             "flags": 2,
             "volume": 1.0,
             "balance": 0.5,
@@ -2620,7 +2624,7 @@
                     "id": "async_delay_filter",
                     "versioned_id": "async_delay_filter",
                     "settings": {
-                        "delay_ms": 9012
+                        "delay_ms": 0
                     },
                     "mixers": 0,
                     "sync": 0,
@@ -2670,6 +2674,86 @@
                     "prev_ver": 536870916,
                     "name": "Limiter",
                     "uuid": "657c6bfb-a05f-4e1a-8a1a-ceab86717826",
+                    "id": "limiter_filter",
+                    "versioned_id": "limiter_filter",
+                    "settings": {
+                        "threshold": 0
+                    },
+                    "mixers": 255,
+                    "sync": 0,
+                    "flags": 0,
+                    "volume": 1.0,
+                    "balance": 0.5,
+                    "enabled": true,
+                    "muted": false,
+                    "push-to-mute": false,
+                    "push-to-mute-delay": 0,
+                    "push-to-talk": false,
+                    "push-to-talk-delay": 0,
+                    "hotkeys": {},
+                    "deinterlace_mode": 0,
+                    "deinterlace_field_order": 0,
+                    "monitoring_type": 0,
+                    "private_settings": {}
+                },
+                {
+                    "prev_ver": 536870916,
+                    "name": "Video Delay 2",
+                    "uuid": "815f696c-d245-4feb-b9c0-32135f0abfef",
+                    "id": "async_delay_filter",
+                    "versioned_id": "async_delay_filter",
+                    "settings": {
+                        "delay_ms": 0
+                    },
+                    "mixers": 0,
+                    "sync": 0,
+                    "flags": 0,
+                    "volume": 1.0,
+                    "balance": 0.5,
+                    "enabled": true,
+                    "muted": false,
+                    "push-to-mute": false,
+                    "push-to-mute-delay": 0,
+                    "push-to-talk": false,
+                    "push-to-talk-delay": 0,
+                    "hotkeys": {},
+                    "deinterlace_mode": 0,
+                    "deinterlace_field_order": 0,
+                    "monitoring_type": 0,
+                    "private_settings": {}
+                },
+                {
+                    "prev_ver": 536870916,
+                    "name": "Compressor 2",
+                    "uuid": "a859010a-2e8f-4ab7-90bd-1ebf31e7112d",
+                    "id": "compressor_filter",
+                    "versioned_id": "compressor_filter",
+                    "settings": {
+                        "ratio": 21.0,
+                        "threshold": -9.3,
+                        "output_gain": 10
+                    },
+                    "mixers": 255,
+                    "sync": 0,
+                    "flags": 0,
+                    "volume": 1.0,
+                    "balance": 0.5,
+                    "enabled": true,
+                    "muted": false,
+                    "push-to-mute": false,
+                    "push-to-mute-delay": 0,
+                    "push-to-talk": false,
+                    "push-to-talk-delay": 0,
+                    "hotkeys": {},
+                    "deinterlace_mode": 0,
+                    "deinterlace_field_order": 0,
+                    "monitoring_type": 0,
+                    "private_settings": {}
+                },
+                {
+                    "prev_ver": 536870916,
+                    "name": "Limiter 2",
+                    "uuid": "5e29cfed-3164-41bf-a9fd-5d2c8d579fd1",
                     "id": "limiter_filter",
                     "versioned_id": "limiter_filter",
                     "settings": {

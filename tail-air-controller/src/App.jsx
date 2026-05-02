@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { io } from "socket.io-client";
 import OBSPanel from "./components/OBSPanel";
 import CameraPanel from "./components/CameraPanel";
@@ -55,12 +55,25 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState("");
 
   const holdTimerRef = useRef(null);
+  const syncStatusRef = useRef(syncStatus);
+  const syncResetTimerRef = useRef(null);
   const isSavingRef = useRef(false);
   const selectedCamsRef = useRef(selectedCams);
 
   useEffect(() => {
     selectedCamsRef.current = selectedCams;
   }, [selectedCams]);
+
+  useEffect(() => {
+    syncStatusRef.current = syncStatus;
+  }, [syncStatus]);
+
+  const clearSyncResetTimer = useCallback(() => {
+    if (syncResetTimerRef.current) {
+      clearTimeout(syncResetTimerRef.current);
+      syncResetTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const onConnect = () => setIsConnected(true);
@@ -96,17 +109,30 @@ export default function App() {
     });
 
     socket.on("sync-complete", () => {
+      const completedStatus =
+        syncStatusRef.current === "beep-sync"
+          ? "beep-complete"
+          : "sync-complete";
+
+      clearSyncResetTimer();
       setShowSyncOverlay(false);
-      setSyncStatus("idle");
+      setSyncMessage("");
+      setSyncStatus(completedStatus);
+      syncResetTimerRef.current = setTimeout(() => {
+        setSyncStatus("idle");
+        syncResetTimerRef.current = null;
+      }, 3000);
     });
 
     socket.on("sync-failed", (data) => {
+      clearSyncResetTimer();
       setShowSyncOverlay(false);
       setSyncStatus("failed");
       setSyncMessage(data?.message || "Sync failed. Try again.");
-      setTimeout(() => {
+      syncResetTimerRef.current = setTimeout(() => {
         setSyncStatus("idle");
         setSyncMessage("");
+        syncResetTimerRef.current = null;
       }, 5000);
     });
 
@@ -120,8 +146,9 @@ export default function App() {
       socket.off("modem-update");
       socket.off("sync-complete");
       socket.off("sync-failed");
+      clearSyncResetTimer();
     };
-  }, []);
+  }, [clearSyncResetTimer]);
 
   useEffect(() => {
     const primaryCam = selectedCams[0];
@@ -183,11 +210,6 @@ export default function App() {
         setSyncStatus("failed");
         setTimeout(() => setSyncStatus("idle"), 3000);
       }, 7000);
-    } else if (syncStatus === "beep-sync") {
-      timeout = setTimeout(() => {
-        setSyncStatus("failed");
-        setTimeout(() => setSyncStatus("idle"), 3000);
-      }, 15000);
     }
     return () => clearTimeout(timeout);
   }, [syncStatus]);
@@ -209,6 +231,7 @@ export default function App() {
 
   const triggerSync = () => {
     if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
+    clearSyncResetTimer();
     setSyncMessage("");
     setShowSyncOverlay(true);
     setSyncStatus("syncing");
@@ -217,6 +240,7 @@ export default function App() {
 
   const triggerBeepSync = () => {
     if (syncStatus === "syncing" || syncStatus === "beep-sync") return;
+    clearSyncResetTimer();
     setSyncMessage("");
     setSyncStatus("beep-sync");
     socket.emit("start-beep-sync");

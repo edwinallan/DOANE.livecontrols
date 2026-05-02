@@ -1,13 +1,106 @@
 const { exec } = require("child_process");
+const fs = require("fs/promises");
 
 function initBeepSync(io, state, obsMain) {
   let isSyncing = false;
+  const cameraSources = ["Tail A", "Tail B", "Mobile SRT"];
+  const localSyncSources = ["Logic", "Internal Mic"];
 
   const trackMapping = {
-    "Tail A": 0,
-    "Tail B": 1,
-    "Mobile SRT": 2,
-    "Internal Mic": 3,
+    "Tail A": [0],
+    "Tail B": [1],
+    "Mobile SRT": [2],
+    "Internal Mic": [3],
+    Logic: [4],
+  };
+
+  const ensureSyncOffsets = () => {
+    if (!state.syncOffsets) {
+      state.syncOffsets = {
+        "Tail A": null,
+        "Tail B": null,
+        "Mobile SRT": null,
+      };
+    }
+  };
+
+  const normalizeOffsets = (offsets, sources) => {
+    const validOffsets = sources.map((source) => offsets[source] || 0);
+    const sharedDelay = Math.min(...validOffsets);
+
+    for (const source of sources) {
+      offsets[source] = Math.max(0, (offsets[source] || 0) - sharedDelay);
+    }
+
+    return sharedDelay;
+  };
+
+  const normalizeOffsetValue = (offsetMs) => Math.max(0, Math.round(offsetMs));
+
+  const setAudioInputSyncOffset = async (inputName, offsetMs) => {
+    const normalizedOffset = normalizeOffsetValue(offsetMs);
+
+    await obsMain
+      .call("SetInputAudioSyncOffset", {
+        inputName,
+        inputAudioSyncOffset: normalizedOffset,
+      })
+      .catch(() => {});
+  };
+
+  const setSourceSyncOffset = async (source, offsetMs) => {
+    const normalizedOffset = normalizeOffsetValue(offsetMs);
+
+    if (!cameraSources.includes(source)) return;
+
+    ensureSyncOffsets();
+    state.syncOffsets[source] = normalizedOffset;
+
+    await obsMain
+      .call("SetSourceFilterSettings", {
+        sourceName: source,
+        filterName: "Video Delay",
+        filterSettings: { delay_ms: normalizedOffset },
+      })
+      .catch(() => {});
+    await setAudioInputSyncOffset(source, normalizedOffset);
+  };
+
+  const setLogicSyncOffset = async (offsetMs) => {
+    const normalizedOffset = Math.max(0, Math.round(offsetMs));
+
+    await setAudioInputSyncOffset("Logic", normalizedOffset);
+    await setAudioInputSyncOffset("beep", normalizedOffset);
+  };
+
+  const setInternalMicSyncOffset = async (offsetMs) => {
+    const normalizedOffset = Math.max(0, Math.round(offsetMs));
+
+    await setAudioInputSyncOffset("Internal Mic", normalizedOffset);
+  };
+
+  const applySyncOffsets = async (offsets, sources) => {
+    for (const source of sources) {
+      await setSourceSyncOffset(source, offsets[source] || 0);
+    }
+  };
+
+  const applyLocalSyncOffsets = async (localOffsets) => {
+    await setLogicSyncOffset(localOffsets.Logic || 0);
+    await setInternalMicSyncOffset(localOffsets["Internal Mic"] || 0);
+  };
+
+  const restoreCameraMuteStates = async (originalMuteStates) => {
+    for (const sourceName of cameraSources) {
+      if (originalMuteStates[sourceName] !== undefined) {
+        await obsMain
+          .call("SetInputMute", {
+            inputName: sourceName,
+            inputMuted: originalMuteStates[sourceName],
+          })
+          .catch(() => {});
+      }
+    }
   };
 
   const analyzeTrack = async (filePath, trackIndex) => {
@@ -46,11 +139,96 @@ function initBeepSync(io, state, obsMain) {
     });
   };
 
+  const analyzeSource = async (filePath, source) => {
+    const trackCandidates = trackMapping[source] || [];
+
+    for (const trackIndex of trackCandidates) {
+      const ts = await analyzeTrack(filePath, trackIndex);
+      if (ts !== null) return { ts, trackIndex };
+    }
+
+    return null;
+  };
+
+  const recordAndAnalyzeBeepPass = async (
+    tracksToAnalyze,
+    recordTimeMs,
+    passLabel,
+  ) => {
+    let recCheck = await obsMain.call("GetRecordStatus");
+    while (recCheck.outputActive) {
+      console.log("   ⏳ Waiting for OBS to finish writing previous file...");
+      await new Promise((r) => setTimeout(r, 1000));
+      recCheck = await obsMain.call("GetRecordStatus");
+    }
+
+    console.log(`\n==================================================`);
+    console.log(
+      `🔄 ${passLabel} (Recording Time: ${(recordTimeMs / 1000).toFixed(1)}s)`,
+    );
+    console.log(`==================================================`);
+
+    console.log("   ⏺️ Starting recording...");
+    await obsMain.call("StartRecord");
+    await new Promise((r) => setTimeout(r, 100));
+
+    console.log("   ▶️ Triggering beep...");
+    await obsMain.call("TriggerMediaInputAction", {
+      inputName: "beep",
+      mediaAction: "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
+    });
+
+    await new Promise((r) => setTimeout(r, recordTimeMs));
+
+    console.log("   ⏹️ Stopping recording...");
+    const stopRes = await obsMain.call("StopRecord");
+    const outputPath = stopRes.outputPath;
+
+    try {
+      console.log("   🔍 Analyzing active sync tracks...");
+      const analyzedTracks = await Promise.all(
+        tracksToAnalyze.map(async (source) => {
+          const result = await analyzeSource(outputPath, source);
+          return [source, result];
+        }),
+      );
+
+      const timestamps = {};
+      const trackIndexes = {};
+      for (const [source, result] of analyzedTracks) {
+        if (result !== null) {
+          timestamps[source] = result.ts;
+          trackIndexes[source] = result.trackIndex;
+          console.log(
+            `      ⏱️ ${source}: Rhythm Locked! (Track ${result.trackIndex}, Start: ${result.ts.toFixed(3)}s)`,
+          );
+        } else {
+          console.log(`      ⚠️ ${source}: Sequence NOT Detected!`);
+        }
+      }
+
+      return { timestamps, trackIndexes };
+    } finally {
+      if (outputPath) {
+        await fs
+          .unlink(outputPath)
+          .then(() => console.log(`   🧹 Deleted recording: ${outputPath}`))
+          .catch((err) =>
+            console.log(
+              `   ⚠️ Could not delete recording ${outputPath}: ${
+                err.message || err
+              }`,
+            ),
+          );
+      }
+    }
+  };
+
   io.on("connection", (socket) => {
     socket.on("start-beep-sync", async () => {
       if (isSyncing) return;
 
-      console.log("\n🔊 Starting BALANCED Audio Beep Sync Workflow...");
+      console.log("\n🔊 Starting Camera Beep Sync Workflow...");
 
       try {
         const recordStatus = await obsMain.call("GetRecordStatus");
@@ -65,208 +243,267 @@ function initBeepSync(io, state, obsMain) {
         }
 
         isSyncing = true;
-        const originalMuteStates = { ...state.audioMuted };
-
-        const cumulativeOffsets = { "Internal Mic": 0 };
-        for (const cam of ["Tail A", "Tail B", "Mobile SRT"]) {
-          cumulativeOffsets[cam] = 0;
-        }
+        const originalMuteStates = { ...(state.audioMuted || {}) };
 
         console.log(
           "   🧹 Pre-flight: Resetting all offsets to 0ms for baseline...",
         );
-        await obsMain
-          .call("SetInputAudioSyncOffset", {
-            inputName: "Internal Mic",
-            inputAudioSyncOffset: 0,
-          })
-          .catch(() => {});
-        await obsMain
-          .call("SetInputAudioSyncOffset", {
-            inputName: "Logic",
-            inputAudioSyncOffset: 0,
-          })
-          .catch(() => {});
+        const localOffsets = { Logic: 0, "Internal Mic": 0 };
+        await applyLocalSyncOffsets(localOffsets);
 
-        for (const cam of ["Tail A", "Tail B", "Mobile SRT"]) {
-          if (state.syncOffsets) state.syncOffsets[cam] = 0;
-          await obsMain
-            .call("SetSourceFilterSettings", {
-              sourceName: cam,
-              filterName: "Video Delay",
-              filterSettings: { delay_ms: 0 },
-            })
-            .catch(() => {});
-          await obsMain
-            .call("SetInputAudioSyncOffset", {
-              inputName: cam,
-              inputAudioSyncOffset: 0,
-            })
-            .catch(() => {});
+        for (const cam of cameraSources) {
+          await setSourceSyncOffset(cam, 0);
           await obsMain
             .call("SetInputMute", { inputName: cam, inputMuted: false })
             .catch(() => {});
         }
         io.emit("state-update", state);
 
+        const currentActiveSources = cameraSources.filter(
+          (sourceName) => state.sourcesConnected?.[sourceName],
+        );
+
+        if (currentActiveSources.length < 1) {
+          console.log(
+            "   ❌ Beep Sync needs at least one connected camera source.",
+          );
+          io.emit("sync-failed", {
+            message: "Connect at least one camera source before Beep Sync.",
+          });
+          await restoreCameraMuteStates(originalMuteStates);
+          isSyncing = false;
+          return;
+        }
+
+        const cameraOffsets = {};
+        for (const source of currentActiveSources) {
+          cameraOffsets[source] = 0;
+        }
+
         let isAligned = false;
         let iteration = 1;
         const maxIterations = 8;
         const toleranceMs = 80;
-
-        // Start Loop 1 at 12 seconds to guarantee a clean baseline
+        const cameraCorrectionGain = 0.5;
         let dynamicWaitTime = 12000;
+        let hasAnyLocalMeasurement = false;
+        let logicToInternalMicBaselineMs = null;
+
+        console.log(
+          `   🎯 Iterative camera calibration: ${currentActiveSources.join(", ")}`,
+        );
+        console.log(
+          "   🎚️ Logic and Internal Mic will be delayed to the slowest camera.",
+        );
 
         while (!isAligned && iteration <= maxIterations) {
-          console.log(`\n==================================================`);
-          console.log(
-            `🔄 ITERATION ${iteration} / ${maxIterations} (Recording Time: ${(dynamicWaitTime / 1000).toFixed(1)}s)`,
+          const { timestamps } = await recordAndAnalyzeBeepPass(
+            [...currentActiveSources, ...localSyncSources],
+            dynamicWaitTime,
+            `ITERATION ${iteration} / ${maxIterations}`,
           );
-          console.log(`==================================================`);
+          const validSources = currentActiveSources.filter(
+            (source) => timestamps[source] !== undefined,
+          );
 
-          const currentActiveSources = [];
-          for (const [sourceName, isConnected] of Object.entries(
-            state.sourcesConnected,
-          )) {
-            if (isConnected) currentActiveSources.push(sourceName);
-          }
-          const tracksToAnalyze = ["Internal Mic", ...currentActiveSources];
-
-          let recCheck = await obsMain.call("GetRecordStatus");
-          while (recCheck.outputActive) {
-            console.log(
-              "   ⏳ Waiting for OBS to finish writing previous file...",
-            );
-            await new Promise((r) => setTimeout(r, 1000));
-            recCheck = await obsMain.call("GetRecordStatus");
-          }
-
-          console.log("   ⏺️ Starting recording...");
-          await obsMain.call("StartRecord");
-          await new Promise((r) => setTimeout(r, 100));
-
-          console.log("   ▶️ Triggering beep...");
-          await obsMain.call("TriggerMediaInputAction", {
-            inputName: "beep",
-            mediaAction: "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
-          });
-
-          await new Promise((r) => setTimeout(r, dynamicWaitTime));
-
-          console.log("   ⏹️ Stopping recording...");
-          const stopRes = await obsMain.call("StopRecord");
-          const outputPath = stopRes.outputPath;
-
-          console.log("   🔍 Analyzing active tracks...");
-          const timestamps = {};
-
-          for (const source of tracksToAnalyze) {
-            const idx = trackMapping[source];
-            if (idx !== undefined) {
-              const ts = await analyzeTrack(outputPath, idx);
-              if (ts !== null) {
-                timestamps[source] = ts;
-                console.log(
-                  `      ⏱️ ${source}: Rhythm Locked! (Start: ${ts.toFixed(3)}s)`,
-                );
-              } else {
-                console.log(`      ⚠️ ${source}: Sequence NOT Detected!`);
-              }
-            }
-          }
-
-          const validSources = Object.keys(timestamps);
-
-          if (validSources.length === 0) {
-            console.log(`   ❌ No sequences found. Retrying iteration...`);
+          if (validSources.length < 1) {
+            console.log(`   ⚠️ Pass skipped: not enough camera sequences found.`);
             iteration++;
             await new Promise((r) => setTimeout(r, 3000));
             continue;
           }
 
-          const allTs = Object.values(timestamps);
+          const allTs = validSources.map((source) => timestamps[source]);
           const slowestTs = Math.max(...allTs);
-
-          let maxDeltaMs = 0;
-          const loopDeltas = {};
+          const cameraDeltas = {};
+          const localDeltas = {};
 
           for (const source of validSources) {
-            const delta = Math.round((slowestTs - timestamps[source]) * 1000);
-            loopDeltas[source] = delta;
-            if (delta > maxDeltaMs) maxDeltaMs = delta;
+            cameraDeltas[source] = Math.round(
+              (slowestTs - timestamps[source]) * 1000,
+            );
+          }
+
+          const referenceSource = validSources.find(
+            (source) => cameraDeltas[source] === 0,
+          );
+          const cameraMaxDeltaMs = Math.max(...Object.values(cameraDeltas));
+          const maxDeltaMs = cameraMaxDeltaMs;
+
+          for (const source of localSyncSources) {
+            if (timestamps[source] === undefined) continue;
+
+            localDeltas[source] = Math.round(
+              (slowestTs - timestamps[source]) * 1000,
+            );
+            hasAnyLocalMeasurement = true;
           }
 
           console.log(`\n   📐 === LOOP ${iteration} RESULTS ===`);
           console.log(
-            `   Target Tolerance: < ${toleranceMs}ms | Max Delta Found: ${maxDeltaMs}ms`,
+            `   Target Tolerance: < ${toleranceMs}ms | Camera Delta Found: ${maxDeltaMs}ms`,
           );
+          console.log(`   👑 Camera Reference: ${referenceSource} at 0ms`);
 
-          if (maxDeltaMs <= toleranceMs) {
+          for (const source of validSources) {
+            console.log(
+              `      -> ${source}: Camera delta ${cameraDeltas[source]}ms`,
+            );
+          }
+
+          for (const source of localSyncSources) {
+            if (localDeltas[source] === undefined) {
+              console.log(`      ⚠️ ${source}: Local beep not detected.`);
+              continue;
+            }
+
+            console.log(
+              `      -> ${source}: Local delta ${localDeltas[source]}ms`,
+            );
+          }
+
+          if (
+            timestamps.Logic !== undefined &&
+            timestamps["Internal Mic"] !== undefined
+          ) {
+            const speakerDelta = Math.round(
+              (timestamps["Internal Mic"] - timestamps.Logic) * 1000,
+            );
+            if (logicToInternalMicBaselineMs === null) {
+              logicToInternalMicBaselineMs = speakerDelta;
+              console.log(
+                `      🔒 Logic -> Internal Mic baseline: ${logicToInternalMicBaselineMs}ms`,
+              );
+            }
+            console.log(
+              `      🧪 Internal Mic vs Logic diagnostic: ${speakerDelta}ms`,
+            );
+          }
+
+          if (localDeltas["Internal Mic"] !== undefined) {
+            const nextInternalMicOffset =
+              (localOffsets["Internal Mic"] || 0) +
+              localDeltas["Internal Mic"];
+            localOffsets["Internal Mic"] = Math.max(0, nextInternalMicOffset);
+            console.log(
+              `      -> Internal Mic: Residual-corrected target ${localOffsets["Internal Mic"]}ms`,
+            );
+          }
+
+          if (
+            logicToInternalMicBaselineMs !== null &&
+            localDeltas["Internal Mic"] !== undefined
+          ) {
+            localOffsets.Logic = Math.max(
+              0,
+              (localOffsets["Internal Mic"] || 0) +
+                logicToInternalMicBaselineMs,
+            );
+            console.log(
+              `      -> Logic: Following Internal Mic target ${localOffsets.Logic}ms`,
+            );
+          } else if (localDeltas.Logic !== undefined) {
+            localOffsets.Logic = Math.max(0, localDeltas.Logic);
+            console.log(
+              `      -> Logic: Absolute offset target ${localOffsets.Logic}ms`,
+            );
+          }
+
+          if (
+            localDeltas.Logic !== undefined &&
+            localDeltas["Internal Mic"] === undefined
+          ) {
+            if (logicToInternalMicBaselineMs === null) {
+              localOffsets["Internal Mic"] = localOffsets.Logic;
+            }
+            console.log(
+              "      -> Internal Mic: No mic residual this pass; keeping previous target.",
+            );
+          }
+
+          if (
+            localDeltas.Logic === undefined &&
+            localDeltas["Internal Mic"] !== undefined
+          ) {
+            if (logicToInternalMicBaselineMs !== null) {
+              localOffsets.Logic = Math.max(
+                0,
+                (localOffsets["Internal Mic"] || 0) +
+                  logicToInternalMicBaselineMs,
+              );
+              console.log(
+                `      -> Logic: Inferred from Internal Mic target ${localOffsets.Logic}ms`,
+              );
+            } else {
+              localOffsets.Logic = localOffsets["Internal Mic"];
+              console.log(
+                "      -> Logic: Mirroring Internal Mic target because Logic was not detected.",
+              );
+            }
+          }
+
+          const internalMicResidual = Math.abs(
+            localDeltas["Internal Mic"] || 0,
+          );
+          const localIsAcceptable =
+            localDeltas["Internal Mic"] !== undefined
+              ? internalMicResidual <= toleranceMs
+              : Object.keys(localDeltas).length > 0;
+
+          if (localIsAcceptable && maxDeltaMs <= toleranceMs) {
             console.log(
               `   ✅ ALIGNMENT ACHIEVED IN ${iteration} ITERATION(S)!`,
             );
             isAligned = true;
             break;
-          } else {
-            console.log(
-              `   ❌ Tolerance missed. Swapping OBS values with new absolute offsets...`,
-            );
-
-            for (const source of validSources) {
-              const newAbsoluteOffset =
-                cumulativeOffsets[source] + loopDeltas[source];
-              cumulativeOffsets[source] = newAbsoluteOffset;
-
-              console.log(
-                `      -> ${source}: Swapping to ${newAbsoluteOffset}ms`,
-              );
-
-              if (source === "Internal Mic") {
-                await obsMain
-                  .call("SetInputAudioSyncOffset", {
-                    inputName: source,
-                    inputAudioSyncOffset: newAbsoluteOffset,
-                  })
-                  .catch(() => {});
-                await obsMain
-                  .call("SetInputAudioSyncOffset", {
-                    inputName: "Logic",
-                    inputAudioSyncOffset: newAbsoluteOffset,
-                  })
-                  .catch(() => {});
-              } else {
-                state.syncOffsets[source] = newAbsoluteOffset;
-                await obsMain
-                  .call("SetSourceFilterSettings", {
-                    sourceName: source,
-                    filterName: "Video Delay",
-                    filterSettings: { delay_ms: newAbsoluteOffset },
-                  })
-                  .catch(() => {});
-                await obsMain
-                  .call("SetInputAudioSyncOffset", {
-                    inputName: source,
-                    inputAudioSyncOffset: newAbsoluteOffset,
-                  })
-                  .catch(() => {});
-              }
-            }
-
-            // BALANCED DYNAMIC WAIT TIME
-            // Wait Time = Highest Delay Applied + 4s sequence duration + 2s safety padding
-            // Floor set to 10s to ensure baseline safety.
-            const maxAppliedOffset = Math.max(
-              ...Object.values(cumulativeOffsets),
-            );
-            dynamicWaitTime = Math.max(10000, maxAppliedOffset + 6000);
-
-            console.log(
-              `   ⏳ Waiting 8.5s for OBS audio buffers to safely rebuild...`,
-            );
-            await new Promise((r) => setTimeout(r, 8500));
-
-            iteration++;
           }
+
+          console.log("   ❌ Tolerance missed. Applying new offsets...");
+
+          for (const source of validSources) {
+            cameraOffsets[source] =
+              (cameraOffsets[source] || 0) +
+              Math.round(cameraDeltas[source] * cameraCorrectionGain);
+          }
+          const sharedCameraDelay = normalizeOffsets(
+            cameraOffsets,
+            currentActiveSources,
+          );
+
+          console.log(
+            `   👑 Camera offsets normalized; removed ${sharedCameraDelay}ms shared camera delay.`,
+          );
+          for (const source of currentActiveSources) {
+            console.log(
+              `      -> ${source}: Swapping to ${cameraOffsets[source] || 0}ms`,
+            );
+          }
+
+          for (const source of localSyncSources) {
+            console.log(
+              `      -> ${source}: Swapping to ${localOffsets[source] || 0}ms`,
+            );
+          }
+
+          await applySyncOffsets(cameraOffsets, currentActiveSources);
+          await applyLocalSyncOffsets(localOffsets);
+
+          const maxCameraOffset = Math.max(
+            0,
+            ...Object.values(cameraOffsets),
+          );
+          dynamicWaitTime = Math.max(10000, maxCameraOffset + 6000);
+          const bufferRebuildWait = Math.min(
+            15000,
+            Math.max(10000, maxCameraOffset + 9000),
+          );
+
+          console.log(
+            `   ⏳ Waiting ${(bufferRebuildWait / 1000).toFixed(1)}s for OBS audio/video buffers to rebuild...`,
+          );
+          await new Promise((r) => setTimeout(r, bufferRebuildWait));
+
+          iteration++;
         }
 
         if (!isAligned) {
@@ -275,21 +512,38 @@ function initBeepSync(io, state, obsMain) {
           );
         }
 
+        if (!hasAnyLocalMeasurement) {
+          console.log(
+            "\n❌ Beep Sync failed: no Logic or Internal Mic local beep samples.",
+          );
+          io.emit("sync-failed", {
+            message: "Beep Sync could not detect Logic or Internal Mic.",
+          });
+          await restoreCameraMuteStates(originalMuteStates);
+          isSyncing = false;
+          return;
+        }
+
+        console.log(`\n   📐 === FINAL OFFSETS ===`);
+        for (const source of currentActiveSources) {
+          console.log(
+            `      -> ${source}: ${cameraOffsets[source] || 0}ms audio + video`,
+          );
+        }
+        console.log(`      -> Logic: ${localOffsets.Logic || 0}ms audio`);
+        console.log(
+          `      -> Internal Mic: ${localOffsets["Internal Mic"] || 0}ms audio`,
+        );
+
+        await applySyncOffsets(cameraOffsets, currentActiveSources);
+        await applyLocalSyncOffsets(localOffsets);
+
         console.log(
           `   ⏳ Final alignment wait: Letting OBS solidify buffers for 3.0s...`,
         );
         await new Promise((r) => setTimeout(r, 3000));
 
-        for (const sourceName of ["Tail A", "Tail B", "Mobile SRT"]) {
-          if (originalMuteStates[sourceName] !== undefined) {
-            await obsMain
-              .call("SetInputMute", {
-                inputName: sourceName,
-                inputMuted: originalMuteStates[sourceName],
-              })
-              .catch(() => {});
-          }
-        }
+        await restoreCameraMuteStates(originalMuteStates);
 
         console.log("\n🎯 BEEP SYNC COMPLETE.");
         io.emit("state-update", state);
