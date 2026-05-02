@@ -1,6 +1,36 @@
 #!/bin/bash
 
 echo "Checking system requirements..."
+MODEM_WIFI_DEVICE="en0"
+MODEM_WIFI_SSID="ZTE_910DD4"
+MODEM_WIFI_PASSWORD="8N6N682386"
+
+CURRENT_SSID=$(sudo ipconfig getsummary "$MODEM_WIFI_DEVICE" | sed -n 's/^[[:space:]]*SSID[[:space:]]*: //p')
+if [ "$CURRENT_SSID" = "<redacted>" ]; then
+    echo "Enabling verbose Wi-Fi SSID reporting..."
+    sudo ipconfig setverbose 1
+    CURRENT_SSID=$(ipconfig getsummary "$MODEM_WIFI_DEVICE" | sed -n 's/^[[:space:]]*SSID[[:space:]]*: //p')
+fi
+
+if [ "$CURRENT_SSID" != "$MODEM_WIFI_SSID" ]; then
+    echo "Connecting Wi-Fi to $MODEM_WIFI_SSID..."
+    networksetup -setairportnetwork "$MODEM_WIFI_DEVICE" "$MODEM_WIFI_SSID" "$MODEM_WIFI_PASSWORD"
+
+    for i in {1..15}; do
+        CURRENT_SSID=$(ipconfig getsummary "$MODEM_WIFI_DEVICE" | sed -n 's/^[[:space:]]*SSID[[:space:]]*: //p')
+        if [ "$CURRENT_SSID" = "$MODEM_WIFI_SSID" ]; then
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$CURRENT_SSID" != "$MODEM_WIFI_SSID" ]; then
+        echo "❌ ERROR: Could not connect to $MODEM_WIFI_SSID. Current SSID: ${CURRENT_SSID:-unknown}"
+        read -p "Press any key to exit..."
+        exit 1
+    fi
+fi
+echo "✅ Wi-Fi connected to $MODEM_WIFI_SSID"
 
 # 1. Check if Homebrew is installed
 if ! command -v brew &> /dev/null; then
